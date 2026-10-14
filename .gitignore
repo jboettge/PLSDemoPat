@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+*.pdf
+*_loesungen.csv
+fonts/*.ttf
+fonts/*.otf

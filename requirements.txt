@@ -1,0 +1,6 @@
+numpy
+pandas
+reportlab
+segno
+# optional: Parquet-Ein-/Ausgabe
+pyarrow
