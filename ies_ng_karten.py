@@ -48,8 +48,6 @@ class CI:
     text: Color = HexColor("#1F1F1F")
     grey: Color = HexColor("#6B6B6B")
     line: Color = HexColor("#CCCCCC")
-    card_bg: Color = HexColor("#F4F1EF")
-    card_front_tint: Color = HexColor("#F9E7E9")
     dept_lines: tuple[str, ...] = ("Bundesamt für Bevölkerungsschutz BABS",)
     conf_lines: tuple[str, ...] = (
         "Schweizerische Eidgenossenschaft",
@@ -82,6 +80,8 @@ FONT_CANDIDATES = {
     "Sans-Bold": ["fonts/Frutiger-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
                   "C:/Windows/Fonts/arialbd.ttf"],
     "Sign": ["/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf", "C:/Windows/Fonts/timesi.ttf"],
+    "Mono": ["fonts/Mono.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "C:/Windows/Fonts/consola.ttf",
+             "fonts/OCR-B.ttf"],
     "MRZ": ["fonts/OCR-B.ttf", "fonts/OCRB.ttf", "fonts/ocrb10.ttf", "fonts/OCRB Regular.otf", "fonts/OCRB.otf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "C:/Windows/Fonts/consola.ttf"],
 }
@@ -270,7 +270,8 @@ def assign_triage(cards: list, args: argparse.Namespace, r: np.random.Generator)
 
 def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Generator) -> list[CardPerson]:
     today = date.today()
-    cities = people[["city"]].dropna()["city"].unique().tolist() or ["Bern"]
+    places = people[["city", "canton"]].dropna().drop_duplicates()
+    origins = [f"{ct} {kt}" for ct, kt in places.itertuples(index=False)] or ["Bern BE"]
     used_docs: set[str] = set()
     cards = []
     for i, p in enumerate(people.itertuples(index=False)):
@@ -314,7 +315,7 @@ def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Gen
             first_name=p.first_name, last_name=p.last_name, gender=p.gender, dob=dob,
             street=str(p.street), house_number="" if pd.isna(p.house_number) else str(p.house_number),
             postcode=str(p.postcode), city=str(p.city), canton=canton,
-            origin=str(r.choice(cities)), height_cm=height, doc_number=doc,
+            origin=str(r.choice(origins)), height_cm=height, doc_number=doc,
             serial=f"{int(r.integers(10, 99))}TRNG{n:09d}", issue_date=issue, expiry=expiry,
             authority=f"Kanton {canton}" if canton else str(p.city), td1=td1, mrz_error=err,
             checks=validate_td1(td1),
@@ -354,28 +355,6 @@ def fit_text(c: Canvas, x, y, s, max_w, font="Sans-Bold", size=7.0, min_size=4.0
     text(c, x, y, s, font, size, color)
 
 
-def watermark(c: Canvas, cx: float, cy: float, ci: CI, size: float = 24) -> None:
-    c.saveState()
-    c.setFillColor(ci.red)
-    c.setFillAlpha(0.10)
-    c.translate(cx, cy)
-    c.rotate(18)
-    text(c, 0, 0, "SPECIMEN", "Sans-Bold", size, anchor="c")
-    c.restoreState()
-
-
-def card_shape(c: Canvas, x: float, y: float, fill: Color, ci: CI) -> None:
-    c.setFillColor(fill)
-    c.setStrokeColor(ci.line)
-    c.setLineWidth(0.3)
-    c.roundRect(x, y, ID_W * mm, ID_H * mm, ID_R * mm, stroke=1, fill=1)
-
-
-def label_value(c: Canvas, x, y, label: str, value: str, max_w: float, ci: CI, vsize=7.0) -> None:
-    text(c, x, y + 2.9 * mm, label, "Sans", 3.6, ci.grey)
-    fit_text(c, x, y, value, max_w, "Sans-Bold", vsize, color=ci.text)
-
-
 def photo_placeholder(c: Canvas, x, y, w, h, ci: CI) -> None:
     c.saveState()
     path = c.beginPath()
@@ -391,55 +370,432 @@ def photo_placeholder(c: Canvas, x, y, w, h, ci: CI) -> None:
     c.rect(x, y, w, h, stroke=1, fill=0)
 
 
-def draw_id_front(c: Canvas, x: float, y: float, p: CardPerson, ci: CI) -> None:
-    card_shape(c, x, y, ci.card_front_tint, ci)
-    top = y + ID_H * mm
-    swiss_cross(c, x + 3 * mm, top - 8.2 * mm, 5.2 * mm, ci)
-    text(c, x + 9.8 * mm, top - 4.3 * mm,
-         "SCHWEIZERISCHE EIDGENOSSENSCHAFT  CONFÉDÉRATION SUISSE", "Sans", 3.5, ci.text)
-    text(c, x + 9.8 * mm, top - 5.9 * mm,
-         "CONFEDERAZIONE SVIZZERA  CONFEDERAZIUN SVIZRA", "Sans", 3.5, ci.text)
-    text(c, x + 9.8 * mm, top - 8.2 * mm,
-         "IDENTITÄTSKARTE  CARTE D'IDENTITÉ  CARTA D'IDENTITÀ  IDENTITY CARD", "Sans-Bold", 4.0, ci.red)
+# -------------------------
+# Identitätskarte Modell 2023 (Masse nach fedpol-Muster, in mm ab oberem linkem Kartenrand)
+# -------------------------
 
-    px, py, pw, ph = x + 3 * mm, y + 9 * mm, 23 * mm, 30 * mm
+@dataclass(frozen=True)
+class IDColors:
+    bg_top: Color = HexColor("#E4EFF6")
+    bg_bottom: Color = HexColor("#CFE3EE")
+    label: Color = HexColor("#2C68C9")         # Feldbezeichnungen
+    data: Color = HexColor("#1A1A1A")          # Personalisierung (Lasergravur)
+    guilloche: Color = HexColor("#7FB2D6")
+    guilloche_warm: Color = HexColor("#EDA97C")
+    contour: Color = HexColor("#5FBFCB")
+    teal: Color = HexColor("#4DB8B0")
+    mountain: Color = HexColor("#4F86D3")
+    kine_green: Color = HexColor("#38A55A")
+    gold: Color = HexColor("#C9A233")
+    window: Color = HexColor("#B9BEC2")
+
+
+IDC = IDColors()
+SEP = "▪"   # ▪ Trenner zwischen den Sprachen (als Quadrat gezeichnet)
+
+
+def _at(top: float, v_mm: float) -> float:
+    """y-Koordinate für einen Abstand v_mm ab Kartenoberkante."""
+    return top - v_mm * mm
+
+
+def _age(dob: date) -> int:
+    t = date.today()
+    return t.year - dob.year - ((t.month, t.day) < (dob.month, dob.day))
+
+
+def ml_label(c: Canvas, x: float, y: float, s: str, size: float = 3.5, color: Color = IDC.label) -> None:
+    """Mehrsprachige Feldbezeichnung, Teile mit ▪ getrennt."""
+    c.setFillColor(color)
+    c.setFont("Sans", size)
+    sq = size * 0.30
+    for i, part in enumerate(p.strip() for p in s.split(SEP)):
+        if i:
+            x += size * 0.32
+            c.rect(x, y + size * 0.18, sq, sq, stroke=0, fill=1)
+            x += sq + size * 0.32
+        c.drawString(x, y, part)
+        x += pdfmetrics.stringWidth(part, "Sans", size)
+
+
+def mono_label(c: Canvas, x: float, y: float, s: str, size: float) -> None:
+    """Dokumentbezeichnung in Monospace, ▪ als Quadrat."""
+    c.setFillColor(IDC.data)
+    c.setFont("Mono", size)
+    gap = pdfmetrics.stringWidth(" ", "Mono", size)
+    for i, part in enumerate(p.strip() for p in s.split(SEP)):
+        if i:
+            c.rect(x + gap * 0.3, y + size * 0.2, size * 0.32, size * 0.32, stroke=0, fill=1)
+            x += 2 * gap
+        c.drawString(x, y, part)
+        x += pdfmetrics.stringWidth(part, "Mono", size) + gap
+
+
+def data_text(c: Canvas, x: float, y: float, s: str, size: float = 8.0, max_w: Optional[float] = None,
+              end_mark: bool = False, color: Color = IDC.data) -> None:
+    """Personalisierte Daten in Monospace, optional ▲ als Feldende."""
+    extra = size * 0.6 if end_mark else 0
+    while max_w and size > 4.5 and pdfmetrics.stringWidth(s, "Mono", size) + extra > max_w:
+        size -= 0.2
+    text(c, x, y, s, "Mono", size, color)
+    if end_mark:
+        ex = x + pdfmetrics.stringWidth(s, "Mono", size) + size * 0.12
+        h = size * 0.36
+        p = c.beginPath()
+        p.moveTo(ex, y + size * 0.08)
+        p.lineTo(ex + h * 1.1, y + size * 0.08)
+        p.lineTo(ex + h * 0.55, y + size * 0.08 + h)
+        p.close()
+        c.drawPath(p, stroke=0, fill=1)
+
+
+# --- Hintergrund (einmal je PDF als Form-XObject; Koordinaten in mm ab unten links) ---
+
+def _poly(c: Canvas, pts, close: bool = True):
+    p = c.beginPath()
+    p.moveTo(pts[0][0] * mm, pts[0][1] * mm)
+    for x, y in pts[1:]:
+        p.lineTo(x * mm, y * mm)
+    if close:
+        p.close()
+    return p
+
+
+def _wave_lines(c: Canvas, color: Color, n: int, y0: float, y1: float, x0: float = 0.0, x1: float = ID_W,
+                alpha: float = 0.22, lw: float = 0.1) -> None:
+    """Guilloche: feine, gegeneinander verschobene Wellenlinien."""
+    c.setStrokeColor(color)
+    c.setStrokeAlpha(alpha)
+    c.setLineWidth(lw)
+    xs = np.linspace(x0, x1, 70)
+    for k in range(n):
+        base = y0 + (y1 - y0) * k / max(n - 1, 1)
+        ph = k * 0.37
+        ys = base + 0.55 * np.sin(2 * np.pi * xs / 13.0 + ph) + 0.22 * np.sin(2 * np.pi * xs / 4.7 - 2 * ph)
+        c.drawPath(_poly(c, list(zip(xs, ys)), close=False), stroke=1, fill=0)
+    c.setStrokeAlpha(1)
+
+
+def _contours(c: Canvas, rng: np.random.Generator, cx: float, cy: float, n: int, r0: float, dr: float,
+              alpha: float = 0.3) -> None:
+    """Höhenlinien: unregelmässige, verschachtelte Kurven um (cx, cy)."""
+    c.setStrokeColor(IDC.contour)
+    c.setStrokeAlpha(alpha)
+    c.setLineWidth(0.18)
+    ph = rng.uniform(0, 2 * np.pi, 3)
+    th = np.linspace(0, 2 * np.pi, 90)
+    for k in range(n):
+        r = (r0 + k * dr) * (1 + 0.16 * np.sin(3 * th + ph[0] + 0.15 * k) + 0.07 * np.sin(5 * th + ph[1])
+                             + 0.04 * np.sin(9 * th + ph[2] - 0.3 * k))
+        c.drawPath(_poly(c, list(zip(cx + r * np.cos(th), cy + 0.75 * r * np.sin(th)))), stroke=1, fill=0)
+    c.setStrokeAlpha(1)
+
+
+def _triangles(c: Canvas, rng: np.random.Generator, x0: float, x1: float, y0: float, y1: float, n: int) -> None:
+    """Dreiecks-Gebirge in Grün-/Blautönen."""
+    cols = [HexColor("#3FB5A5"), HexColor("#5B9BD5"), HexColor("#2E9B62"), HexColor("#9AD3C8"), HexColor("#7FA9E0")]
+    for _ in range(n):
+        s = float(rng.uniform(2.0, 6.0))
+        x, y = float(rng.uniform(x0, x1 - s)), float(rng.uniform(y0, y1 - s * 0.87))
+        c.setFillColor(cols[int(rng.integers(len(cols)))])
+        c.setFillAlpha(float(rng.uniform(0.12, 0.45)))
+        c.drawPath(_poly(c, [(x, y), (x + s, y), (x + s / 2, y + s * 0.87)]), stroke=0, fill=1)
+    c.setFillAlpha(1)
+
+
+def _microline(c: Canvas, y: float, x0: float, x1: float, s: str, color: Color, h: float = 0.55) -> None:
+    """Farbiges Band mit Mikroschrift."""
+    c.setFillColor(color)
+    c.setFillAlpha(0.8)
+    c.rect(x0 * mm, y * mm, (x1 - x0) * mm, h * mm, stroke=0, fill=1)
+    c.setFillAlpha(1)
+    c.setFillColor(white)
+    c.setFont("Sans", 1.3)
+    unit = s + "  "
+    reps = int((x1 - x0) * mm / max(pdfmetrics.stringWidth(unit, "Sans", 1.3), 1)) + 1
+    c.drawString(x0 * mm + 0.5, y * mm + h * mm * 0.25, (unit * reps)[: reps * len(unit)])
+
+
+def _mountain(c: Canvas) -> None:
+    """Stilisierter Pizzo Rotondo (blaue Schraffur), Vorderseite Mitte."""
+    ridge = [(30, 30.5), (34, 33), (37, 36.5), (39.5, 35), (42, 39.5), (44, 38.2), (46.5, 41.5), (48, 40),
+             (50.5, 37.5), (53, 38.8), (56, 35.5), (59, 34), (61, 30.5)]
+    p = _poly(c, [(30, 28)] + ridge + [(61, 28)])
+    c.saveState()
+    c.setFillColor(IDC.mountain)
+    c.setFillAlpha(0.05)
+    c.drawPath(p, stroke=0, fill=1)
+    c.clipPath(p, stroke=0, fill=0)
+    c.setStrokeColor(IDC.mountain)
+    c.setStrokeAlpha(0.22)
+    c.setLineWidth(0.1)
+    for i in range(45):
+        x = 26 + i * 0.8
+        c.line(x * mm, 28 * mm, (x + 6) * mm, 42 * mm)
+    c.restoreState()
+
+
+def _green_mountain(c: Canvas) -> None:
+    """Grünes Berg-Symbol mit Bewegungsstreifen und Kreuz (stilisiert), Vorderseite rechts."""
+    _triangles(c, np.random.default_rng(7), 62, 85, 26, 40, 14)
+    c.setFillColor(IDC.kine_green)
+    c.drawPath(_poly(c, [(71, 31.8), (80.5, 31.8), (77, 37.2)]), stroke=0, fill=1)
+    c.setFillColor(IDC.bg_top)
+    for i, (x0, w) in enumerate([(70.5, 6.5), (69.5, 5.8), (71.0, 6.2), (70.0, 5.0)]):
+        c.rect(x0 * mm, (32.6 + i * 1.05) * mm, w * mm, 0.35 * mm, stroke=0, fill=1)
+    c.setFillColor(IDC.kine_green)
+    for i, (x0, w) in enumerate([(66.5, 3.2), (67.8, 2.4), (66.0, 3.0)]):
+        c.rect(x0 * mm, (32.2 + i * 1.3) * mm, w * mm, 0.6 * mm, stroke=0, fill=1)
+    c.rect(79.6 * mm, 37.3 * mm, 1.6 * mm, 0.45 * mm, stroke=0, fill=1)
+    c.rect(80.17 * mm, 36.73 * mm, 0.45 * mm, 1.6 * mm, stroke=0, fill=1)
+
+
+def _gold_drop(c: Canvas) -> None:
+    """Goldener Wassertropfen mit Wellenringen (stilisiert), Rückseite rechts."""
+    c.setStrokeColor(IDC.gold)
+    c.setLineWidth(0.9)
+    for k, (rx, ry) in enumerate([(4.8, 1.3), (3.2, 0.85)]):
+        c.ellipse((69.8 - rx) * mm, (28.4 - ry) * mm, (69.8 + rx) * mm, (28.4 + ry) * mm, stroke=1, fill=0)
+    c.setFillColor(IDC.gold)
+    p = c.beginPath()
+    p.moveTo(70 * mm, 37.6 * mm)
+    p.curveTo(71.5 * mm, 35.2 * mm, 73.6 * mm, 33.0 * mm, 73.2 * mm, 31.2 * mm)
+    p.curveTo(72.8 * mm, 29.0 * mm, 67.2 * mm, 29.0 * mm, 66.8 * mm, 31.2 * mm)
+    p.curveTo(66.4 * mm, 33.0 * mm, 68.5 * mm, 35.2 * mm, 70 * mm, 37.6 * mm)
+    c.drawPath(p, stroke=0, fill=1)
+    c.setFillColor(HexColor("#5B9BD5"))
+    c.setFillAlpha(0.5)
+    for dx, dy, s in [(76.5, 31.5, 1.0), (78.6, 32.4, 0.8)]:
+        c.circle(dx * mm, dy * mm, s * mm, stroke=0, fill=1)
+    c.setFillAlpha(1)
+
+
+def _bubbles(c: Canvas, rng: np.random.Generator) -> None:
+    """Wassermoleküle (Kreise mit Verbindungen), Rückseite oben."""
+    c.setStrokeColor(IDC.guilloche)
+    c.setStrokeAlpha(0.55)
+    c.setLineWidth(0.2)
+    pts = [(float(rng.uniform(28, 82)), float(rng.uniform(36, 52))) for _ in range(16)]
+    for x, y in pts:
+        c.circle(x * mm, y * mm, float(rng.uniform(0.8, 2.2)) * mm, stroke=1, fill=0)
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if abs(x1 - x0) < 12:
+            c.line(x0 * mm, y0 * mm, x1 * mm, y1 * mm)
+    c.setStrokeAlpha(1)
+
+
+def _bg_base(c: Canvas) -> None:
+    p = c.beginPath()
+    p.roundRect(0, 0, ID_W * mm, ID_H * mm, ID_R * mm)
+    c.clipPath(p, stroke=0, fill=0)
+    c.linearGradient(0, ID_H * mm, 0, 0, (IDC.bg_top, IDC.bg_bottom), extend=True)
+
+
+def _form_front(c: Canvas) -> None:
+    rng = np.random.default_rng(2023)
+    _bg_base(c)
+    _wave_lines(c, IDC.guilloche, 58, 1, 53)
+    _wave_lines(c, IDC.guilloche_warm, 14, 30, 47, 30, 75, alpha=0.2)
+    _contours(c, rng, 10, 47, 7, 3, 2.2)
+    _contours(c, rng, 18, 6, 6, 4, 2.4, alpha=0.25)
+    _contours(c, rng, 72, 12, 5, 4, 2.6, alpha=0.2)
+    _mountain(c)
+    _green_mountain(c)
+    _microline(c, ID_H - 6.9, 31.8, ID_W, "CONFOEDERATIO HELVETICA •", IDC.teal)
+    _microline(c, 3.6, 2.5, 31, "SCHWEIZ • SUISSE • SVIZZERA • SVIZRA • SWITZERLAND •",
+               IDC.contour, 0.4)
+
+
+CANTON_ROWS = ("VS BE GR UR GL TI SG OW VD", "NW SZ AR AI FR LU ZG NE SO", "JU ZH BL TG SH AG BS GE")
+CANTON_YEARS = " • ".join(
+    "UR 1291|SZ 1291|OW 1291|NW 1291|LU 1332|ZH 1351|GL 1352|ZG 1352|BE 1353|FR 1481|SO 1481|BS 1501|BL 1501|"
+    "SH 1501|AI 1513|AR 1513|SG 1803|GR 1803|AG 1803|TG 1803|TI 1803|VD 1803|VS 1815|NE 1815|GE 1815|JU 1979|"
+    "CONFOEDERATIO HELVETICA".split("|")) + " •"
+
+
+def _form_back(c: Canvas) -> None:
+    rng = np.random.default_rng(2024)
+    _bg_base(c)
+    _wave_lines(c, IDC.guilloche, 58, 1, 53)
+    _contours(c, rng, 40, 44, 6, 3, 2.3, alpha=0.25)
+    _bubbles(c, rng)
+    _triangles(c, rng, 0.5, 16, 27, 43, 22)
+    c.setFillColor(HexColor("#1E1E1E"))                      # schwarzes Dreieck (stilisiertes Kinegramm)
+    c.drawPath(_poly(c, [(4.2, 31.3), (11.4, 31.3), (7.8, 36.8)]), stroke=0, fill=1)
+    _gold_drop(c)
+    # Band Ausstellung/Behörde: aufgehellt, wellige Unterkante, Mikroschrift-Linie mit Kantonen
+    xs = np.linspace(ID_W, 0, 60)
+    c.setFillColor(white)
+    c.setFillAlpha(0.45)
+    c.drawPath(_poly(c, [(0, ID_H - 26.6), (ID_W, ID_H - 26.6)]
+                     + [(xx, ID_H - 32.4 + 0.25 * np.sin(xx * 1.7) + 0.15 * np.sin(xx * 4.1)) for xx in xs]),
+               stroke=0, fill=1)
+    c.setFillAlpha(1)
+    _microline(c, ID_H - 33.0, 0.8, ID_W - 0.8, CANTON_YEARS, HexColor("#E7A274"), 0.45)
+    # MRZ-Zone: ruhiger Grund, Kantonskürzel als blasse Konturschrift
+    c.setFillColor(HexColor("#E2EFF3"))
+    c.setFillAlpha(0.7)
+    c.rect(0, 0, ID_W * mm, (ID_H - 33.0) * mm, stroke=0, fill=1)
+    c.setFillAlpha(1)
+    c.setStrokeColor(HexColor("#A9D3D8"))
+    c.setStrokeAlpha(0.45)
+    c.setLineWidth(0.15)
+    for i, row in enumerate(CANTON_ROWS):
+        t = c.beginText()
+        t.setTextRenderMode(1)
+        t.setFont("Sans", 11)
+        for j, kt in enumerate(row.split()):
+            t.setTextOrigin((5.5 + j * 8.9) * mm, (ID_H - 37.0 - i * 6.3) * mm)
+            t.textOut(kt)
+        c.drawText(t)
+    c.setStrokeAlpha(1)
+
+
+class _FlatAlpha:
+    """Canvas-Hülle für Form-XObjects: Transparenz als Mischung mit der Grundfarbe (viewer-unabhängig)."""
+
+    def __init__(self, c: Canvas, bg: Color):
+        self._c, self._bg = c, bg
+        self._fill, self._stroke = (Color(0, 0, 0), 1.0), (Color(0, 0, 0), 1.0)
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def _mix(self, col: Color, a: float) -> Color:
+        b = self._bg
+        return Color(b.red + (col.red - b.red) * a, b.green + (col.green - b.green) * a,
+                     b.blue + (col.blue - b.blue) * a)
+
+    def setFillColor(self, col, alpha=None):
+        self._fill = (col, self._fill[1])
+        self._c.setFillColor(self._mix(*self._fill))
+
+    def setStrokeColor(self, col, alpha=None):
+        self._stroke = (col, self._stroke[1])
+        self._c.setStrokeColor(self._mix(*self._stroke))
+
+    def setFillAlpha(self, a):
+        self._fill = (self._fill[0], a)
+        self._c.setFillColor(self._mix(*self._fill))
+
+    def setStrokeAlpha(self, a):
+        self._stroke = (self._stroke[0], a)
+        self._c.setStrokeColor(self._mix(*self._stroke))
+
+
+def _use_form(c: Canvas, name: str, x: float, y: float, build) -> None:
+    """Hintergrund einmal je PDF als Form-XObject anlegen und wiederverwenden."""
+    done = c.__dict__.setdefault("_id_forms", set())
+    if name not in done:
+        c.beginForm(name, lowerx=0, lowery=0, upperx=ID_W * mm, uppery=ID_H * mm)
+        c.saveState()
+        build(_FlatAlpha(c, Color(0.86, 0.92, 0.95)))
+        c.restoreState()
+        c.endForm()
+        done.add(name)
+    c.saveState()
+    c.translate(x, y)
+    c.doForm(name)
+    c.restoreState()
+
+
+# --- Personalisierung ---
+
+def card_outline(c: Canvas, x: float, y: float, ci: CI) -> None:
+    c.setStrokeColor(ci.line)
+    c.setLineWidth(0.3)
+    c.roundRect(x, y, ID_W * mm, ID_H * mm, ID_R * mm, stroke=1, fill=0)
+
+
+def specimen(c: Canvas, x: float, y: float, size: float, angle: float = 0, spacing: float = 0) -> None:
+    """SPECIMEN als Konturschrift (wie fedpol-Muster)."""
+    c.saveState()
+    c.translate(x, y)
+    c.rotate(angle)
+    c.setStrokeColor(HexColor("#333333"))
+    c.setLineWidth(0.3)
+    t = c.beginText()
+    t.setTextRenderMode(1)
+    t.setFont("Sans-Bold", size)
+    t.setCharSpace(spacing)
+    t.setTextOrigin(0, 0)
+    t.textOut("SPECIMEN")
+    c.drawText(t)
+    c.restoreState()
+
+
+def ghost_window(c: Canvas, x: float, y: float, w: float, h: float, p: CardPerson) -> None:
+    """Transparentes Fenster mit blassem Geisterbild."""
+    k = w * 0.18
+    path = c.beginPath()
+    path.moveTo(x + k, y)
+    path.curveTo(x + w * 0.5, y + h * 0.04, x + w - k * 0.5, y - h * 0.02, x + w - k * 0.3, y + k)
+    path.curveTo(x + w - k * 0.9, y + h * 0.5, x + w, y + h * 0.8, x + w - k * 0.6, y + h - k * 0.6)
+    path.curveTo(x + w * 0.6, y + h * 1.01, x + k * 0.5, y + h, x + k * 0.3, y + h - k)
+    path.curveTo(x + k * 0.9, y + h * 0.5, x, y + h * 0.25, x + k, y)
+    path.close()
+    c.saveState()
+    c.setFillColor(IDC.window)
+    c.setFillAlpha(0.6)
+    c.drawPath(path, stroke=0, fill=1)
+    c.clipPath(path, stroke=0, fill=0)
+    if p.photo_seed is not None:
+        draw_avatar(c, x + w * 0.1, y + h * 0.05, w * 0.8, h * 0.92, _age(p.dob), p.gender,
+                    np.random.default_rng(p.photo_seed), gray=True)
+        c.setFillColor(IDC.window)
+        c.setFillAlpha(0.72)
+        c.rect(x, y, w, h, stroke=0, fill=1)
+    c.restoreState()
+
+
+def draw_id_front(c: Canvas, x: float, y: float, p: CardPerson, ci: CI) -> None:
+    _use_form(c, "IDFront2023", x, y, _form_front)
+    top = y + ID_H * mm
+    X = lambda v: x + v * mm  # noqa: E731
+
+    fit_text(c, X(3.8), _at(top, 4.9), "SCHWEIZ SUISSE SVIZZERA SVIZRA SWITZERLAND", 77.5 * mm, "Mono", 10.5,
+             color=IDC.data)
+    swiss_cross(c, X(32.3), _at(top, 11.2), 3.3 * mm, ci)
+    for i, ln in enumerate((f"IDENTITÄTSKARTE {SEP} CARTE D'IDENTITÉ", f"CARTA D'IDENTITÀ {SEP} CARTA D'IDENTITAD",
+                            "IDENTITY CARD")):
+        mono_label(c, X(36.9), _at(top, 8.9 + i * 1.25), ln, 3.9)
+    data_text(c, X(65.6), _at(top, 10.1), p.doc_number, 10.0, max_w=19 * mm)
+
+    px, py, pw, ph = X(3.9), _at(top, 42.2), 26.4 * mm, 31.6 * mm
     if p.photo_seed is None:
         photo_placeholder(c, px, py, pw, ph, ci)
     else:
-        age = date.today().year - p.dob.year - ((date.today().month, date.today().day) < (p.dob.month, p.dob.day))
-        draw_avatar(c, px, py, pw, ph, age, p.gender, np.random.default_rng(p.photo_seed))
-        c.setStrokeColor(ci.line)
-        c.setLineWidth(0.3)
-        c.rect(px, py, pw, ph, stroke=1, fill=0)
-    text(c, px + pw / 2, py - 3.2 * mm, f"{p.expiry.year} / {p.doc_number}", "Sans", 4.2, ci.grey, "c")
+        draw_avatar(c, px, py, pw, ph, _age(p.dob), p.gender, np.random.default_rng(p.photo_seed), gray=True)
+    ghost_window(c, X(59.6), _at(top, 25.6), 9.8 * mm, 12.6 * mm, p)
+    micro = f"{p.dob:%d/%m/%Y}<{p.height_cm}<{p.doc_number}<{p.expiry:%d/%m/%Y}"
+    fit_text(c, X(6.4), _at(top, 43.1), f"{micro}<{micro}", 22 * mm, "Mono", 1.75, min_size=1.2, color=IDC.data)
 
-    fx, fw = x + 29.5 * mm, 52 * mm
-    rows = top - 15 * mm
-    step = 6.6 * mm
-    label_value(c, fx, rows, "Name / Nom / Cognome / Surname", p.last_name.upper(), fw, ci)
-    label_value(c, fx, rows - step, "Vorname(n) / Prénom(s) / Nome(i) / Given name(s)", p.first_name, fw, ci)
-    y3 = rows - 2 * step
-    label_value(c, fx, y3, "Geburtsdatum / Date of birth", fmt_date(p.dob), 23 * mm, ci, 6.5)
-    sx = {"m": "M", "f": "F"}.get(p.gender, "X")
-    label_value(c, fx + 25 * mm, y3, "Geschlecht / Sex", sx, 9 * mm, ci, 6.5)
-    label_value(c, fx + 37 * mm, y3, "Nationalität", "CHE", 15 * mm, ci, 6.5)
-    y4 = rows - 3 * step
-    label_value(c, fx, y4, "Gültig bis / Date of expiry", fmt_date(p.expiry), 23 * mm, ci, 6.5)
-    label_value(c, fx + 25 * mm, y4, "Dokument-Nr. / Document no.", p.doc_number, 27 * mm, ci, 6.5)
-
-    age = (date.today() - p.dob).days // 365
-    text(c, fx, y + 6.5 * mm, "Unterschrift / Signature / Firma", "Sans", 3.4, ci.grey)
-    if age >= 7:
+    if _age(p.dob) >= 7:
         rng = np.random.default_rng([p.card_no, zlib.crc32(f"{p.doc_number}{p.last_name}".encode())])
-        draw_signature(c, fx + 2 * mm, y + 2.4 * mm, 45 * mm, p.first_name, p.last_name, rng, age,
-                       max_h=5 * mm)
+        draw_signature(c, X(4.6), _at(top, 49.4), 26 * mm, p.first_name, p.last_name, rng, _age(p.dob),
+                       max_h=6.5 * mm)
 
-    c.saveState()
-    c.translate(x + ID_W * mm - 1.6 * mm, y + 12 * mm)
-    c.rotate(90)
-    text(c, 0, 0, p.serial, "Sans", 4.2, ci.grey)
-    c.restoreState()
-    watermark(c, x + 55 * mm, y + 22 * mm, ci, 22)
+    fx, fw = X(32.6), (ID_W - 32.6 - 3.0) * mm
+    ml_label(c, fx, _at(top, 27.3), f"Name {SEP} Nom {SEP} Cognome {SEP} Num {SEP} Surname")
+    data_text(c, fx, _at(top, 30.9), p.last_name, max_w=fw, end_mark=True)
+    ml_label(c, fx, _at(top, 33.6), f"Vorname(n) {SEP} Prénom(s) {SEP} Nome(i) {SEP} Prenum(s) {SEP} Given name(s)")
+    data_text(c, fx, _at(top, 37.3), p.first_name, max_w=fw, end_mark=True)
+
+    rows3 = lambda xx, v, lines: [ml_label(c, xx, _at(top, v + i * 1.25), ln)  # noqa: E731
+                                  for i, ln in enumerate(lines)]
+    rows3(fx, 40.0, (f"Geschlecht {SEP} Sexe", f"Sesso {SEP} Schlattaina", "Sex"))
+    rows3(X(47.5), 40.0, (f"Nationalität {SEP} Nationalité", f"Cittadinanza {SEP} Naziunalitad", "Nationality"))
+    data_text(c, fx, _at(top, 44.9), {"m": "M", "f": "F"}.get(p.gender, "X"), 7.4)
+    data_text(c, X(47.5), _at(top, 44.9), "CHE", 7.4)
+    rows3(fx, 46.3, (f"Geburtsdatum {SEP} Date de naissance", f"Data di nascita {SEP} Data da naschientscha",
+                     "Date of birth"))
+    rows3(X(59.6), 46.3, (f"Gültig bis {SEP} Date d'expiration", f"Data di scadenza {SEP} Data da scadenza",
+                          "Date of expiry"))
+    data_text(c, fx, _at(top, 51.3), fmt_date(p.dob))
+    data_text(c, X(59.6), _at(top, 51.3), fmt_date(p.expiry))
+
+    specimen(c, X(7.3), _at(top, 41.0), 13.5, angle=90, spacing=1.0)
+    card_outline(c, x, y, ci)
 
 
 def draw_mrz(c: Canvas, x: float, y: float, td1: TD1) -> None:
@@ -457,25 +813,40 @@ def draw_mrz(c: Canvas, x: float, y: float, td1: TD1) -> None:
 
 
 def draw_id_back(c: Canvas, x: float, y: float, p: CardPerson, ci: CI) -> None:
-    card_shape(c, x, y, ci.card_bg, ci)
+    _use_form(c, "IDBack2023", x, y, _form_back)
     top = y + ID_H * mm
-    swiss_cross(c, x + ID_W * mm - 8 * mm, top - 8 * mm, 5 * mm, ci)
+    X = lambda v: x + v * mm  # noqa: E731
 
-    fx, step = x + 4 * mm, 6.4 * mm
-    r0 = top - 7.5 * mm
-    label_value(c, fx, r0, "Heimatort / Lieu d'origine / Luogo di attinenza", p.origin, 55 * mm, ci, 6.5)
-    label_value(c, fx, r0 - step, "Grösse / Taille / Statura / Height", f"{p.height_cm} cm", 25 * mm, ci, 6.5)
-    label_value(c, fx + 30 * mm, r0 - step, "Ausgestellt am / Date of issue", fmt_date(p.issue_date),
-                25 * mm, ci, 6.5)
-    label_value(c, fx, r0 - 2 * step, "Behörde / Autorité / Autorità / Authority", p.authority, 55 * mm, ci, 6.5)
-    watermark(c, x + 62 * mm, y + 31 * mm, ci, 18)
+    ml_label(c, X(5.0), _at(top, 4.4),
+             f"Heimatort {SEP} Lieu d'origine {SEP} Luogo di attinenza {SEP} Lieu d'origin {SEP} Place of origin")
+    data_text(c, X(5.0), _at(top, 7.4), p.origin, max_w=40 * mm)
+    ml_label(c, X(5.0), _at(top, 8.9), f"Grösse {SEP} Taille {SEP} Statura {SEP} Grondezza {SEP} Height")
+    data_text(c, X(5.0), _at(top, 11.8), f"{p.height_cm} cm")
 
-    # MRZ-Zone frei von Hintergrund/Wasserzeichen halten
-    zone_h = 16.5 * mm
-    c.setFillColor(white)
-    c.roundRect(x + 0.8 * mm, y + 0.8 * mm, (ID_W - 1.6) * mm, zone_h - 0.8 * mm, (ID_R - 0.8) * mm,
-                stroke=0, fill=1)
+    ghost_window(c, X(16.2), _at(top, 25.6), 9.8 * mm, 12.8 * mm, p)
+    c.saveState()   # optisch variables Feld: Ablaufjahr und Dokumentnummer, unscharf
+    c.setFillColor(HexColor("#4A4A4A"))
+    c.setFillAlpha(0.13)
+    for dx, dy in [(-0.25, 0), (0.25, 0), (0, 0.25), (0, -0.25), (0.18, 0.18), (-0.18, -0.18), (0, 0)]:
+        c.setFont("Sans", 9.5)
+        c.drawString(X(34.0 + dx), _at(top, 18.4 + dy), str(p.expiry.year))
+        c.drawString(X(33.6 + dx), _at(top, 22.6 + dy), p.doc_number)
+    c.restoreState()
+
+    ml_label(c, X(5.2), _at(top, 28.4),
+             f"Ausgestellt am {SEP} Délivrée le {SEP} Rilasciata il {SEP} Emessa ils {SEP} Date of issue")
+    data_text(c, X(5.2), _at(top, 31.6), fmt_date(p.issue_date))
+    ml_label(c, X(44.2), _at(top, 28.4), f"Behörde {SEP} Autorité {SEP} Autorità {SEP} Autoritad {SEP} Authority")
+    data_text(c, X(44.2), _at(top, 31.6), p.authority, max_w=(ID_W - 44.2 - 3) * mm)
+
+    c.saveState()
+    c.translate(X(82.6), _at(top, 26.6))
+    c.rotate(90)
+    text(c, 0, 0, p.serial, "Mono", 5.6, IDC.data)
+    c.restoreState()
+    specimen(c, X(48.5), _at(top, 6.6), 13, spacing=3.2)
     draw_mrz(c, x, y, p.td1)
+    card_outline(c, x, y, ci)
 
 
 def draw_header(c: Canvas, x: float, y_top: float, w: float, ci: CI, logo: Optional[str]) -> float:
@@ -692,6 +1063,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--font-regular", help="z. B. Frutiger Roman TTF")
     g.add_argument("--font-bold", help="z. B. Frutiger Bold TTF")
     g.add_argument("--font-mrz", help="OCR-B TTF (empfohlen)")
+    g.add_argument("--font-mono", help="Monospace-TTF für die Personalisierung (ID 2023)")
     return ap.parse_args(argv)
 
 
@@ -700,7 +1072,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     last = args.start + args.count - 1
     if args.count <= 0 or args.start < 1 or last > args.max_number:
         raise SystemExit(f"Nummernbereich {args.start}..{last} ausserhalb 1..{args.max_number}")
-    fonts = register_fonts({"Sans": args.font_regular, "Sans-Bold": args.font_bold, "MRZ": args.font_mrz})
+    fonts = register_fonts({"Sans": args.font_regular, "Sans-Bold": args.font_bold, "MRZ": args.font_mrz, "Mono": args.font_mono})
     if "ocr" not in Path(fonts["MRZ"]).name.lower():
         print(f"Hinweis: MRZ mit Ersatzschrift {Path(fonts['MRZ']).name}; für maschinelles Lesen OCR-B verwenden "
               "(--font-mrz oder fonts/OCRB.ttf).")

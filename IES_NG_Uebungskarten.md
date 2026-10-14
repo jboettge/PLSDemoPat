@@ -4,11 +4,24 @@ Ausbildungsmaterial mit fiktiven Personen: Schweizer ID (Vorder-/Rückseite, MRZ
 
 ## Aufbau einer Karte (105 × 148 mm)
 1. CI-Kopf: Bundeslogo (vereinfacht oder `--logo`), «Bundesamt für Bevölkerungsschutz BABS», «Ausbildung IES NG»
-2. ID Vorderseite, Massstab 1:1 (85.6 × 54 mm, ID-1)
-3. ID Rückseite mit MRZ: 3 × 30 Zeichen, Teilung 2.54 mm, Zeilenabstand 4.23 mm, weisse Zone ohne Wasserzeichen
+2. ID Vorderseite, Massstab 1:1 (85.6 × 54 mm, ID-1), Layout Identitätskarte 2023
+3. ID Rückseite mit MRZ: 3 × 30 Zeichen, Teilung 2.54 mm, Zeilenabstand 4.23 mm, ruhiger heller Grund
 4. Fuss: Kartennummer, Name, Wohnadresse, ggf. Verletzungsmuster, Hinweis «fiktiv»; Prä-Triage-Feld und QR unten rechts
 
-Passfoto: comicartiges Vektor-Porträt passend zu Alter und Geschlecht (`ies_ng_avatar.py`), pro Karte reproduzierbar (Seed + Kartennummer).
+Passfoto: comicartiges Vektor-Porträt passend zu Alter und Geschlecht (`ies_ng_avatar.py`), pro Karte reproduzierbar (Seed + Kartennummer),
+wie beim Original in Graustufen.
+
+## Layout Identitätskarte 2023
+Vorlage: fedpol-Muster «Front/Back of the Swiss identity card as of 3 March 2023» (Wikimedia Commons, CC BY 3.0 CH).
+- Farbset: hellblauer Verlauf, blaue Guilloche, Höhenlinien, Pizzo Rotondo (blau), Dreiecks-Gebirge grün/blau,
+  Feldbezeichnungen blau (`#2C68C9`), Daten schwarz in Monospace, Sprachen mit ▪ getrennt, ▲ als Feldende
+- Vorderseite: Kopfzeile «SCHWEIZ SUISSE SVIZZERA SVIZRA SWITZERLAND», Kreuz + Dokumentbezeichnung, Dokumentnummer
+  oben rechts; Foto links, darunter Mikroschrift und Unterschrift; rechts Name, Vorname(n), Geschlecht/Nationalität,
+  Geburtsdatum/Gültig bis; Fenster mit Geisterbild
+- Rückseite: Heimatort (mit Kanton), Grösse; Fenster, unscharfes Feld Ablaufjahr/Dokumentnummer, goldener Tropfen,
+  senkrechte Seriennummer; Band Ausgestellt am/Behörde; MRZ-Zone mit Kantonskürzeln als blasse Konturschrift
+- Sicherheitsmerkmale nur stilisiert angedeutet; Hintergründe als PDF-Form je Datei nur einmal gespeichert
+- Daten-Schrift: `--font-mono` (Default DejaVu Sans Mono / Consolas)
 Alle IDs tragen «SPECIMEN», Dokumentnummern beginnen mit `X` (fiktiv).
 
 ## Originalgrösse
