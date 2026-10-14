@@ -504,6 +504,7 @@ def draw_card(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argp
 
     front_y = y - 2 * mm - ID_H * mm
     draw_id_front(c, x, front_y, p, ci)
+    control_scale(c, x - 4.5 * mm, front_y, ci)
     back_y = front_y - 2 * mm - ID_H * mm
     draw_id_back(c, x, back_y, p, ci)
 
@@ -546,6 +547,21 @@ def draw_triage(c: Canvas, x: float, y: float, w: float, h: float, cat: str) -> 
     text(c, x + w / 2, y + 2.6 * mm, label, "Sans-Bold", size, fg, "c")
 
 
+def control_scale(c: Canvas, x: float, y: float, ci: CI, length_mm: int = 50) -> None:
+    """Senkrechtes Kontrollmass (mm-Teilung) zur Prüfung des Drucks in Originalgrösse."""
+    c.setStrokeColor(ci.grey)
+    c.setLineWidth(0.25)
+    c.line(x, y, x, y + length_mm * mm)
+    for i in range(length_mm + 1):
+        t = 2.0 if i % 10 == 0 else 1.3 if i % 5 == 0 else 0.7
+        c.line(x, y + i * mm, x + t * mm, y + i * mm)
+    c.saveState()
+    c.translate(x - 0.8 * mm, y + length_mm / 2 * mm)
+    c.rotate(90)
+    text(c, 0, 0, f"Kontrollmass {length_mm} mm – Druck 100 %", "Sans", 4.2, ci.grey, "c")
+    c.restoreState()
+
+
 def cut_marks(c: Canvas, ox: float, oy: float, w: float, h: float) -> None:
     c.setStrokeColorRGB(0.6, 0.6, 0.6)
     c.setLineWidth(0.25)
@@ -576,6 +592,7 @@ def render_pdf(cards: list[CardPerson], out: Path, args: argparse.Namespace, ci:
         if len(cards) % 4:
             c.showPage()
     c.setTitle("Ausbildung IES NG – Übungskarten")
+    c.setViewerPreference("PrintScaling", "None")  # Druckdialog: tatsächliche Grösse
     c.setAuthor("BABS – Ausbildung IES NG")
     c.save()
 

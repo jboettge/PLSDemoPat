@@ -10,6 +10,14 @@ Ausbildungsmaterial mit fiktiven Personen: Schweizer ID (Vorder-/Rückseite, MRZ
 
 Alle IDs tragen «SPECIMEN», Dokumentnummern beginnen mit `X` (fiktiv).
 
+## Originalgrösse
+- ID im PDF exakt 85.6 × 54 mm (ISO/IEC 7810 ID-1), gemessen in A6- und A4-Layout
+- PDF-Vorgabe «PrintScaling = None»: Druckdialog startet mit tatsächlicher Grösse
+- **Drucken mit 100 % / «Tatsächliche Grösse»**, nie «An Seite anpassen»
+  (A6-PDF auf A4 angepasst = 141 %; A4 mit Rand-Anpassung ≈ 94–97 %)
+- Kontrolle: Kontrollmass links neben der Vorderseite muss nachgemessen 50 mm sein
+- Für A4-Drucker `--layout a4` verwenden, dann mit Papierschneider auf A6 schneiden
+
 ## Nutzung
 ```bash
 pip install -r requirements.txt
