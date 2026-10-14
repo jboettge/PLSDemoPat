@@ -596,7 +596,15 @@ def _bg_base(c: Canvas) -> None:
     p = c.beginPath()
     p.roundRect(0, 0, ID_W * mm, ID_H * mm, ID_R * mm)
     c.clipPath(p, stroke=0, fill=0)
-    c.linearGradient(0, ID_H * mm, 0, 0, (IDC.bg_top, IDC.bg_bottom), extend=True)
+    # Verlauf als feine Streifen statt linearGradient: Shadings in Form-XObjects legt reportlab
+    # in den Seiten-Ressourcen ab -> «cannot find Shading resource» (MuPDF) bzw. fehlender Verlauf.
+    top, bot, n = IDC.bg_top, IDC.bg_bottom, 120
+    band = ID_H * mm / n
+    for i in range(n):
+        t = (i + 0.5) / n
+        c.setFillColor(Color(top.red + (bot.red - top.red) * t, top.green + (bot.green - top.green) * t,
+                             top.blue + (bot.blue - top.blue) * t))
+        c.rect(0, ID_H * mm - (i + 1) * band - 0.05, ID_W * mm, band + 0.1, stroke=0, fill=1)
 
 
 def _form_front(c: Canvas) -> None:
