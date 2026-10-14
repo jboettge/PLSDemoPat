@@ -75,11 +75,13 @@ MRZ_PITCH, MRZ_LINE = 2.54, 4.23          # 10 Zeichen/Zoll, 6 Zeilen/Zoll
 MRZ_CAP_MM = 2.4                          # Zeichenhöhe OCR-B Grösse 1
 
 FONT_CANDIDATES = {
-    "Sans": ["fonts/Frutiger-Roman.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
-    "Sans-Bold": ["fonts/Frutiger-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"],
-    "Sign": ["/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"],
+    "Sans": ["fonts/Frutiger-Roman.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+             "C:/Windows/Fonts/arial.ttf"],
+    "Sans-Bold": ["fonts/Frutiger-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                  "C:/Windows/Fonts/arialbd.ttf"],
+    "Sign": ["/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf", "C:/Windows/Fonts/timesi.ttf"],
     "MRZ": ["fonts/OCR-B.ttf", "fonts/OCRB.ttf", "fonts/ocrb10.ttf", "fonts/OCRB Regular.otf", "fonts/OCRB.otf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"],
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "C:/Windows/Fonts/consola.ttf"],
 }
 
 
