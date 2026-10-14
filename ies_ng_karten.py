@@ -162,6 +162,11 @@ def demo_names() -> tuple[pd.DataFrame, pd.DataFrame]:
             pd.DataFrame(DEMO_LAST, columns=["last_name", "freq"]))
 
 
+def _find_data(pattern: str) -> Optional[Path]:
+    hits = sorted(p for ext in ("csv", "xlsx", "parquet") for p in (HERE / "data").glob(f"{pattern}.{ext}"))
+    return hits[-1] if hits else None
+
+
 def load_addresses(args: argparse.Namespace) -> pd.DataFrame:
     """Nur echte Adressen: amtliches Gebäudeadressverzeichnis (swisstopo) oder eigene Adressdatei."""
     src = Path(args.addresses) if args.addresses else find_register()
@@ -671,9 +676,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--gemeinde", nargs="*")
     g.add_argument("--wohngebaeude", action="store_true", help="nur Wohngebäude")
 
-    g = ap.add_argument_group("Namen (ohne Angabe: eingebaute Demo-Listen)")
-    g.add_argument("--first-names")
-    g.add_argument("--last-names")
+    g = ap.add_argument_group("Namen (Default: BFS-Dateien data/vornamen*, data/nachnamen*; sonst Demo-Listen)")
+    g.add_argument("--first-names", help="BFS Vornamen nach Geburtsjahr/Geschlecht (CSV/XLSX)")
+    g.add_argument("--last-names", help="BFS Nachnamen nach Kanton (CSV/XLSX)")
+    g.add_argument("--name-year-window", type=int, default=2, help="Vornamen: Geburtsjahr ± Jahre")
 
     g = ap.add_argument_group("CI")
     g.add_argument("--logo", help="offizielles Logo Bund/BABS (PNG/JPG) statt gezeichnetem Kopf")
@@ -695,12 +701,18 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     r = np.random.default_rng(args.seed)
     addr = load_addresses(args)
-    if args.first_names and args.last_names:
-        fn, ln = read_ch_names(args.first_names, args.last_names)
+    fn_path = args.first_names or _find_data("vornamen*")
+    ln_path = args.last_names or _find_data("nachnamen*")
+    if fn_path and ln_path:
+        fn, ln = read_ch_names(fn_path, ln_path)
+        info = [c for c in ("birth_year", "canton") if c in fn.columns]
+        print(f"BFS-Namen: {len(fn)} Vornamen-Zeilen ({', '.join(info) or 'ohne Jahrgang/Kanton'}), "
+              f"{len(ln)} Nachnamen-Zeilen ({'nach Kanton' if 'canton' in ln.columns else 'national'})")
     else:
+        print("Hinweis: keine BFS-Namensdateien (data/vornamen*, data/nachnamen*) – Demo-Listen verwendet.")
         fn, ln = demo_names()
 
-    cfg = GenConfig()
+    cfg = GenConfig(name_year_window=args.name_year_window)
     people = generate_people(args.count * (3 if args.adults_only else 1), addr, fn, ln, cfg=cfg,
                              seed=args.seed, exact_n=True)
     if args.adults_only:

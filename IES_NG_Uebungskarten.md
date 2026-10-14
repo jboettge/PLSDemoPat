@@ -32,6 +32,20 @@ python ies_ng_adressen.py --canton BE --wohngebaeude -o data/adressen_be.csv   #
 python ies_ng_karten.py -n 50 --canton BE --wohngebaeude    # Karten mit echten Berner Wohnadressen
 ```
 
+## Namen nach BFS-Verteilung
+Dateien in `data/` ablegen (werden automatisch gefunden) oder per `--first-names/--last-names` übergeben:
+- `data/vornamen*.csv|xlsx`: BFS Vornamen der ständigen Wohnbevölkerung **nach Geburtsjahr und Geschlecht**
+- `data/nachnamen*.csv|xlsx`: BFS Nachnamen der ständigen Wohnbevölkerung **nach Kanton**
+
+Ziehung:
+- Vorname nach Häufigkeit, bedingt auf Geschlecht und Geburtsjahr ± `--name-year-window` (Default 2)
+- Nachname nach Häufigkeit im **Kanton der echten Adresse** (sonst national)
+- Ohne BFS-Dateien: eingebaute Demo-Listen (Hinweis in der Ausgabe)
+
+Format-Toleranz: CSV/XLSX, Titelzeilen im Excel, Lang- oder Breitformat (Jahre als Spalten),
+Spalten de/fr/it/en, Geschlecht `Männlich/Weiblich`/`M/F`/`1/2`, Kantonsnamen → Kürzel,
+Jahresbereiche (`1990-1999`) → Mitte; Total-/Schweiz-Zeilen und unterdrückte Werte (`X`) werden entfernt.
+
 ## Nutzung
 ```bash
 pip install -r requirements.txt

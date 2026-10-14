@@ -6,6 +6,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -37,6 +39,8 @@ class NameCols:
     first_freq: str = "freq"
     last: str = "last_name"
     last_freq: str = "freq"
+    year: str = "birth_year"     # optional: Geburtsjahr (Vornamen)
+    canton: str = "canton"       # optional: Kanton (Nachnamen, ggf. Vornamen)
 
 
 GENDER_MAP = {
@@ -52,20 +56,86 @@ ADDR_ALIASES = {
     "city": ["ort", "gemeinde", "place", "stadt", "dplzname", "zip_name", "com_name"],
     "canton": ["kt", "kanton", "state", "gdekt", "com_canton"],
 }
+FREQ_ALIASES = ["häufigkeit", "anzahl", "count", "frequency", "value", "wert", "obs_value", "anzahl personen"]
+YEAR_ALIASES = ["geburtsjahr", "jahrgang", "birth year", "birth_year", "année de naissance", "anno di nascita",
+                "jahr", "year", "année"]
+CANTON_ALIASES = ["kanton", "canton", "cantone", "kt"]
 FN_ALIASES = {
-    "first": ["vorname", "prenom", "prénom", "given"],
-    "gender": ["geschlecht", "sex", "sexe"],
-    "first_freq": ["häufigkeit", "anzahl", "count", "frequency", "value"],
+    "first": ["vorname", "vornamen", "prenom", "prénom", "nome", "given", "first name"],
+    "gender": ["geschlecht", "sex", "sexe", "sesso"],
+    "first_freq": FREQ_ALIASES,
+    "year": YEAR_ALIASES,
+    "canton": CANTON_ALIASES,
 }
 LN_ALIASES = {
-    "last": ["nachname", "nom", "name", "surname"],
-    "last_freq": ["häufigkeit", "anzahl", "count", "frequency", "value"],
+    "last": ["nachname", "nachnamen", "nom", "nom de famille", "cognome", "name", "surname", "last name"],
+    "last_freq": FREQ_ALIASES,
+    "canton": CANTON_ALIASES,
 }
+
+# Kantonsnamen (de/fr/it/en, BFS-Schreibweisen) -> Kürzel
+CANTONS = {
+    "ZH": ["zürich", "zurich", "zurigo"], "BE": ["bern", "berne", "berna", "bern / berne"],
+    "LU": ["luzern", "lucerne", "lucerna"], "UR": ["uri"], "SZ": ["schwyz", "svitto"],
+    "OW": ["obwalden", "obwald", "obvaldo"], "NW": ["nidwalden", "nidwald", "nidvaldo"],
+    "GL": ["glarus", "glaris", "glarona"], "ZG": ["zug", "zoug", "zugo"],
+    "FR": ["freiburg", "fribourg", "friburgo", "fribourg / freiburg"],
+    "SO": ["solothurn", "soleure", "soletta"], "BS": ["basel-stadt", "bâle-ville", "basilea città"],
+    "BL": ["basel-landschaft", "bâle-campagne", "basilea campagna"],
+    "SH": ["schaffhausen", "schaffhouse", "sciaffusa"],
+    "AR": ["appenzell ausserrhoden", "appenzell rh.-ext.", "appenzello esterno"],
+    "AI": ["appenzell innerrhoden", "appenzell rh.-int.", "appenzello interno"],
+    "SG": ["st. gallen", "saint-gall", "san gallo", "st.gallen"], "GR": ["graubünden", "grisons", "grigioni",
+          "graubünden / grigioni / grischun"],
+    "AG": ["aargau", "argovie", "argovia"], "TG": ["thurgau", "thurgovie", "turgovia"],
+    "TI": ["tessin", "ticino"], "VD": ["waadt", "vaud"], "VS": ["wallis", "valais", "vallese", "valais / wallis"],
+    "NE": ["neuenburg", "neuchâtel", "neuchatel"], "GE": ["genf", "genève", "geneve", "ginevra"],
+    "JU": ["jura", "giura"],
+}
+_CANTON_LOOKUP = {n: k for k, names in CANTONS.items() for n in names} | {k.lower(): k for k in CANTONS}
+_TOTAL_LABELS = {"total", "totale", "insgesamt", "schweiz", "suisse", "svizzera", "switzerland", "ch", ""}
+
+
+def normalize_canton(s: pd.Series) -> pd.Series:
+    """Kantonsname/-kürzel -> Kürzel; Gesamttotal (Schweiz) -> NA."""
+    key = _clean_str(s).str.lower().str.replace(r"^\s*-+\s*", "", regex=True)
+    return key.map(lambda k: _CANTON_LOOKUP.get(k) if isinstance(k, str) else None)
+
+
+def _parse_year(s: pd.Series) -> pd.Series:
+    """'1990', '1990-1999' (-> Mitte), sonst NA."""
+    parts = _clean_str(s).str.extract(r"(\d{4})(?:\D+(\d{4}))?")
+    a = pd.to_numeric(parts[0], errors="coerce")
+    b = pd.to_numeric(parts[1], errors="coerce").fillna(a)
+    return ((a + b) / 2).round()
+
+
+def _melt_year_columns(df: pd.DataFrame, freq_col: str, year_col: str) -> pd.DataFrame:
+    """Breitformat (Jahre als Spalten, typisch BFS-Export) -> Langformat."""
+    years = [c for c in df.columns if re.fullmatch(r"\d{4}", str(c))]
+    if not years or freq_col in df.columns:
+        return df
+    ids = [c for c in df.columns if c not in years]
+    return df.melt(id_vars=ids, value_vars=years, var_name=year_col, value_name=freq_col)
+
+
+HEADER_HINTS = {"vorname", "vornamen", "nachname", "nachnamen", "prénom", "prenom", "nom", "first_name",
+                "last_name", "street", "strasse", "stn_label", "name"}
 
 
 def _read_any(path: Path) -> pd.DataFrame:
-    if path.suffix.lower() in {".parquet", ".pq"}:
+    suf = path.suffix.lower()
+    if suf in {".parquet", ".pq"}:
         return pd.read_parquet(path)
+    if suf in {".xlsx", ".xls"}:
+        # BFS-Excel: Titelzeilen überspringen, Kopfzeile anhand bekannter Spaltennamen finden
+        raw = pd.read_excel(path, header=None, dtype=str)
+        hdr = next((i for i, row in raw.head(40).iterrows()
+                    if HEADER_HINTS & {str(v).strip().lower() for v in row if pd.notna(v)}), 0)
+        df = raw.iloc[hdr + 1:].copy()
+        df.columns = [str(c).strip() if pd.notna(c) else f"col{i}" for i, c in enumerate(raw.iloc[hdr])]
+        df.columns = [c[:-2] if re.fullmatch(r"\d{4}\.0", c) else c for c in df.columns]
+        return df.dropna(how="all")
     # sep=None erkennt ',' und ';' (BFS/swisstopo); dtype=str schützt PLZ/Hausnummern
     return pd.read_csv(path, sep=None, engine="python", dtype=str, encoding="utf-8-sig")
 
@@ -169,12 +239,13 @@ def read_ch_names(
     ncols: NameCols = NameCols(),
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Vornamen: first_name, freq [, gender]. Nachnamen: last_name, freq.
-    Gender wird auf m/f/x normalisiert (m/w/f, 1/2, männlich/weiblich, ...).
-    Doppelte Namen (z. B. je Kanton/Jahr) werden aufsummiert.
+    Vornamen: first_name, freq [, gender, birth_year, canton]. Nachnamen: last_name, freq [, canton].
+    Unterstützt BFS-Exporte (CSV/XLSX, Lang- oder Breitformat mit Jahren als Spalten).
+    Gender -> m/f/x, Kanton -> Kürzel, Jahresbereiche -> Mitte. Gesamttotal-Zeilen werden entfernt.
     """
     fn = _apply_aliases(_normalize_cols(_read_any(Path(first_names_path))), FN_ALIASES, ncols)
     ln = _apply_aliases(_normalize_cols(_read_any(Path(last_names_path))), LN_ALIASES, ncols)
+    fn = _melt_year_columns(fn, ncols.first_freq, ncols.year)
 
     _ensure_columns(fn, [ncols.first, ncols.first_freq], "first_names")
     _ensure_columns(ln, [ncols.last, ncols.last_freq], "last_names")
@@ -182,15 +253,32 @@ def read_ch_names(
     fn[ncols.gender] = normalize_gender(fn[ncols.gender]) if ncols.gender in fn.columns else "x"
     fn[ncols.first] = _clean_str(fn[ncols.first])
     ln[ncols.last] = _clean_str(ln[ncols.last])
-    fn[ncols.first_freq] = _as_weights(fn[ncols.first_freq])
-    ln[ncols.last_freq] = _as_weights(ln[ncols.last_freq])
+    fn[ncols.first_freq] = pd.to_numeric(fn[ncols.first_freq], errors="coerce")
+    ln[ncols.last_freq] = pd.to_numeric(ln[ncols.last_freq], errors="coerce")
 
-    fn = fn[fn[ncols.first].notna() & (fn[ncols.first] != "")]
-    ln = ln[ln[ncols.last].notna() & (ln[ncols.last] != "")]
+    fn = fn[fn[ncols.first].notna() & ~fn[ncols.first].str.lower().isin(_TOTAL_LABELS)]
+    ln = ln[ln[ncols.last].notna() & ~ln[ncols.last].str.lower().isin(_TOTAL_LABELS)]
+    # BFS: unterdrückte Werte ('X', '...') und 0 entfernen
+    fn = fn[fn[ncols.first_freq] > 0]
+    ln = ln[ln[ncols.last_freq] > 0]
 
-    fn = (fn.groupby([ncols.first, ncols.gender], as_index=False)[ncols.first_freq].sum()
-            .astype({ncols.first: str}))
-    ln = ln.groupby(ncols.last, as_index=False)[ncols.last_freq].sum().astype({ncols.last: str})
+    fn_keys = [ncols.first, ncols.gender]
+    if ncols.year in fn.columns:
+        fn[ncols.year] = _parse_year(fn[ncols.year])
+        fn = fn[fn[ncols.year].notna()]
+        fn_keys.append(ncols.year)
+    for df, keys in ((fn, fn_keys), (ln, [ncols.last])):
+        if ncols.canton in df.columns:
+            df[ncols.canton] = normalize_canton(df[ncols.canton])
+            if df[ncols.canton].notna().any():  # Kantonszeilen vorhanden -> Schweiz-Total verwerfen
+                df.drop(df.index[df[ncols.canton].isna()], inplace=True)
+                keys.append(ncols.canton)
+    fn = fn.groupby(fn_keys, as_index=False)[ncols.first_freq].sum().astype({ncols.first: str})
+    ln = ln.groupby([ncols.last] + ([ncols.canton] if ncols.canton in ln.columns and
+                                    ln[ncols.canton].notna().any() else []),
+                    as_index=False)[ncols.last_freq].sum().astype({ncols.last: str})
+    if fn.empty or ln.empty:
+        raise ValueError("Namensdateien enthalten nach Bereinigung keine Einträge.")
     return fn, ln
 
 # -------------------------
@@ -224,6 +312,8 @@ class GenConfig:
     p_mixed_couple: float = 0.9
     # Anteil x bei Gender (Vorname dann aus Gesamtpool)
     p_gender_x: float = 0.0
+    # Vornamen: Geburtsjahr ± Fenster (bei BFS-Daten nach Jahrgang)
+    name_year_window: int = 2
     # Ankerdatum (bei Instanziierung, nicht beim Import)
     today: date = field(default_factory=date.today)
 
@@ -244,22 +334,55 @@ class GenConfig:
 
 
 class NameSampler:
-    """Vorberechnete Ziehwahrscheinlichkeiten (statt Filter/Normierung pro Person)."""
+    """
+    Ziehung nach Häufigkeit, optional bedingt auf Geschlecht, Geburtsjahr (± Fenster) und Kanton.
+    Wahrscheinlichkeiten werden je Bedingung einmal berechnet und gecacht.
+    """
 
-    def __init__(self, names: np.ndarray, weights: np.ndarray, genders: Optional[np.ndarray] = None):
+    def __init__(self, names: np.ndarray, weights: np.ndarray, genders: Optional[np.ndarray] = None,
+                 years: Optional[np.ndarray] = None, cantons: Optional[np.ndarray] = None, year_window: int = 2):
         if len(names) == 0:
             raise ValueError("name table is empty")
         self.names = names
+        self.w = np.asarray(weights, float)
         self.genders = genders
-        self.p_all = weights / weights.sum()
-        self.p_by_gender: dict[str, np.ndarray] = {}
-        if genders is not None:
-            for g in ("m", "f"):
-                wg = weights * np.isin(genders, [g, "x"])
-                self.p_by_gender[g] = wg / wg.sum() if wg.sum() > 0 else self.p_all
+        self.years = None if years is None else np.asarray(years, float)
+        self.cantons = cantons
+        self.window = year_window
+        self._uniq_years = None if self.years is None else np.unique(self.years[~np.isnan(self.years)])
+        self._cache: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
 
-    def pick(self, r: np.random.Generator, gender: Optional[str] = None) -> Tuple[str, str]:
-        i = int(r.choice(len(self.names), p=self.p_by_gender.get(gender or "", self.p_all)))
+    def _dist(self, gender: Optional[str], year: Optional[int], canton: Optional[str]):
+        key = (gender if gender in ("m", "f") else None,
+               None if self.years is None or year is None else int(year),
+               canton if self.cantons is not None else None)
+        if key in self._cache:
+            return self._cache[key]
+        mask = np.ones(len(self.names), bool)
+        if key[0] and self.genders is not None:
+            gm = np.isin(self.genders, [key[0], "x"])
+            mask &= gm if (self.w * gm).sum() > 0 else True
+        if key[1] is not None:
+            ym = np.abs(self.years - key[1]) <= self.window
+            if not (mask & ym).any():  # nächstgelegenes verfügbares Jahr
+                ny = self._uniq_years[np.argmin(np.abs(self._uniq_years - key[1]))]
+                ym = np.abs(self.years - ny) <= self.window
+            mask &= ym
+        if key[2] is not None:
+            cm = self.cantons == key[2]
+            if (mask & cm).any():
+                mask &= cm
+        idx = np.flatnonzero(mask)
+        if idx.size == 0 or self.w[idx].sum() <= 0:
+            idx = np.arange(len(self.names))
+        p = self.w[idx] / self.w[idx].sum()
+        self._cache[key] = (idx, p)
+        return idx, p
+
+    def pick(self, r: np.random.Generator, gender: Optional[str] = None, year: Optional[int] = None,
+             canton: Optional[str] = None) -> Tuple[str, str]:
+        idx, p = self._dist(gender, year, canton)
+        i = int(idx[int(r.choice(len(idx), p=p))])
         if gender in ("m", "f"):
             g = gender
         elif self.genders is not None:
@@ -324,12 +447,17 @@ def generate_people(
     addr_records = addr.reindex(columns=addr_cols.all).to_dict("records")
 
     r = np.random.default_rng(seed)
+    col = lambda df, c: df[c].to_numpy() if c in df.columns else None  # noqa: E731
     fn_sampler = NameSampler(
         first_names[ncols.first].to_numpy(),
         _as_weights(first_names[ncols.first_freq]),
-        first_names[ncols.gender].to_numpy() if ncols.gender in first_names.columns else None,
+        col(first_names, ncols.gender),
+        col(first_names, ncols.year),
+        col(first_names, ncols.canton),
+        year_window=cfg.name_year_window,
     )
-    ln_sampler = NameSampler(last_names[ncols.last].to_numpy(), _as_weights(last_names[ncols.last_freq]))
+    ln_sampler = NameSampler(last_names[ncols.last].to_numpy(), _as_weights(last_names[ncols.last_freq]),
+                             cantons=col(last_names, ncols.canton))
     probs = cfg.family_probs
 
     rows: list[dict] = []
@@ -367,7 +495,9 @@ def generate_people(
                     n_adults = remaining
 
         a = addr_records[int(r.integers(len(addr_records)))]
-        family_last, _ = ln_sampler.pick(r)
+        canton = a.get(addr_cols.canton)
+        canton = canton if isinstance(canton, str) and canton else None
+        family_last, _ = ln_sampler.pick(r, canton=canton)
 
         # Alter: bei Kindern muss das jüngste Elternteil alt genug sein
         adult_lo, adult_hi = cfg.adult_min, cfg.adult_max
@@ -390,8 +520,9 @@ def generate_people(
                 genders.append(_adult_gender(r, cfg))
 
         for age, g in zip(ages, genders):
-            first, g_eff = fn_sampler.pick(r, g)
-            add(first, family_last, g_eff, _dob_from_age(r, age, age, cfg.today), ft, "adult", a)
+            dob = _dob_from_age(r, age, age, cfg.today)
+            first, g_eff = fn_sampler.pick(r, g, dob.year, canton)
+            add(first, family_last, g_eff, dob, ft, "adult", a)
 
         # Kinder: Elternalter bei Geburt in [min, max] bzgl. jüngstem Elternteil
         youngest = min(ages)
@@ -399,8 +530,9 @@ def generate_people(
         kid_hi = min(cfg.child_max + 1, youngest - cfg.parent_age_at_birth_min)
         for _ in range(n_kids):
             g = "m" if r.random() < 0.5 else "f"
-            first, g_eff = fn_sampler.pick(r, g)
-            add(first, family_last, g_eff, _dob_from_age(r, kid_lo, kid_hi, cfg.today), ft, "child", a)
+            dob = _dob_from_age(r, kid_lo, kid_hi, cfg.today)
+            first, g_eff = fn_sampler.pick(r, g, dob.year, canton)
+            add(first, family_last, g_eff, dob, ft, "child", a)
 
     return pd.DataFrame(rows, columns=out_cols)
 

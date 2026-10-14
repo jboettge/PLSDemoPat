@@ -4,5 +4,7 @@ reportlab
 segno
 # optional: Parquet-Ein-/Ausgabe
 pyarrow
+# optional: BFS-Excel-Dateien
+openpyxl
 # OTF-Schriften (z. B. OCR-B .otf) automatisch nach TTF wandeln
 fontTools
