@@ -926,7 +926,8 @@ def draw_card(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argp
 
     front_y = y - 2 * mm - ID_H * mm
     draw_id_front(c, x, front_y, p, ci)
-    control_scale(c, x - 4.5 * mm, front_y, ci)
+    if not getattr(args, "_enlarged", False):  # Kontrollmass nur bei Originalgrösse sinnvoll
+        control_scale(c, x - 4.5 * mm, front_y, ci)
     back_y = front_y - 2 * mm - ID_H * mm
     draw_id_back(c, x, back_y, p, ci)
 
@@ -999,6 +1000,28 @@ def render_pdf(cards: list[CardPerson], out: Path, args: argparse.Namespace, ci:
         for p in cards:
             draw_card(c, 0, 0, p, ci, args)
             c.showPage()
+    elif args.layout == "a4-1":  # 1 Karte je A4, Originalgrösse, zentriert mit Schnittlinien
+        c = Canvas(str(out), pagesize=A4)
+        ox, oy = (A4[0] - W) / 2, (A4[1] - H) / 2
+        for p in cards:
+            draw_card(c, ox, oy, p, ci, args)
+            if args.cut_marks:
+                cut_marks(c, ox, oy, W, H)
+            c.showPage()
+    elif args.layout == "a4-gross":  # 1 Karte je A4, vergrössert (A6 -> A4 = Faktor 2)
+        c = Canvas(str(out), pagesize=A4)
+        scale = min(A4[0] / W, A4[1] / H)
+        ox, oy = (A4[0] - W * scale) / 2, (A4[1] - H * scale) / 2
+        args._enlarged = True
+        for p in cards:
+            c.saveState()
+            c.translate(ox, oy)
+            c.scale(scale, scale)
+            draw_card(c, 0, 0, p, ci, args)
+            c.restoreState()
+            text(c, A4[0] / 2, 4 * mm, f"Vergrössert ({scale:.0%}) – nicht Originalgrösse", "Sans", 7, ci.grey, "c")
+            c.showPage()
+        args._enlarged = False
     else:  # 4 x A6 auf A4 hoch
         c = Canvas(str(out), pagesize=A4)
         cell_h = A4[1] / 2
@@ -1101,7 +1124,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--prefix", default="CHY")
     g.add_argument("--digits", type=int, default=4)
     g.add_argument("--max-number", type=int, default=2000, help="höchste erlaubte Nummer (CHY2000)")
-    g.add_argument("--layout", choices=["a6", "a4"], default="a6", help="a6 = 1 Karte/Seite, a4 = 4 Karten/Seite")
+    g.add_argument("--layout", choices=["a6", "a4", "a4-1", "a4-gross"], default="a6",
+                   help="a6 = 1 Karte/Seite A6; a4 = 4 Karten/A4; a4-1 = 1 Karte/A4 in Originalgrösse; "
+                        "a4-gross = 1 Karte/A4 vergrössert")
 
     g = ap.add_argument_group("PNG-Export (z. B. Android-Emulator, virtuelle Kamera)")
     g.add_argument("--png", nargs="?", const="png", metavar="ORDNER",

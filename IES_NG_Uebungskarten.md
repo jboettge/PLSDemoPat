@@ -98,6 +98,8 @@ Jahresbereiche (`1990-1999`) → Mitte; Total-/Schweiz-Zeilen und unterdrückte 
 pip install -r requirements.txt
 python ies_ng_karten.py -n 40                       # CHY0001–CHY0040, 1 Karte/Seite A6
 python ies_ng_karten.py -n 200 --layout a4          # 4 Karten/A4 mit Schnittlinien
+python ies_ng_karten.py -n 10 --layout a4-1         # 1 Karte/A4 in Originalgrösse
+python ies_ng_karten.py -n 10 --layout a4-gross     # 1 Karte/A4 vergrössert (Beamer, Aushang)
 python ies_ng_karten.py -n 50 --start 151           # CHY0151–CHY0200
 python ies_ng_karten.py -n 100 --p-invalid-mrz 0.1 --p-expired 0.05   # Negativfälle
 python ies_ng_karten.py @karten.args                # Argumente aus Datei (1 pro Zeile)
@@ -112,7 +114,7 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | `--prefix`, `--digits`, `--max-number` | CHY, 4, 2000 | Nummernkreis CHY0001–CHY2000 (Überschreitung = Abbruch) |
 | `--qr-format` | `{id}` | Payload nur Kartennummer (z. B. `CHY0003`); CHA-Format `(dc\|{id}\|{id})` wird von der IES-NG-App als `DCCHY0003CHY0003` gelesen |
 | `--qr-error` | m | ECC (L/M/Q; H passt nicht in Version 2) |
-| `--layout` | a6 | `a6` oder `a4` (4-up) |
+| `--layout` | a6 | `a6` (1 Karte/A6), `a4` (4 Karten/A4), `a4-1` (1 Karte/A4, Originalgrösse, Schnittlinie), `a4-gross` (1 Karte/A4, vergrössert ×2, ohne Kontrollmass) |
 | `--p-invalid-mrz` | 0 | Anteil falscher Prüfziffern (Feld in Lösungsliste) |
 | `--p-expired` | 0 | Anteil abgelaufener Ausweise |
 | `--adults-only` | aus | nur Erwachsene |
