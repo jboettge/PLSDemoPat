@@ -432,6 +432,13 @@ def mono_label(c: Canvas, x: float, y: float, s: str, size: float) -> None:
         x += pdfmetrics.stringWidth(part, "Mono", size) + gap
 
 
+def mono_label_width(s: str, size: float) -> float:
+    """Breite wie von mono_label gezeichnet (inkl. Trenner)."""
+    gap = pdfmetrics.stringWidth(" ", "Mono", size)
+    parts = [p.strip() for p in s.split(SEP)]
+    return sum(pdfmetrics.stringWidth(p, "Mono", size) for p in parts) + gap * (len(parts) - 1) * 3
+
+
 def data_text(c: Canvas, x: float, y: float, s: str, size: float = 8.0, max_w: Optional[float] = None,
               end_mark: bool = False, color: Color = IDC.data) -> None:
     """Personalisierte Daten in Monospace, optional ▲ als Feldende."""
@@ -757,10 +764,18 @@ def draw_id_front(c: Canvas, x: float, y: float, p: CardPerson, ci: CI) -> None:
     fit_text(c, X(3.8), _at(top, 4.9), "SCHWEIZ SUISSE SVIZZERA SVIZRA SWITZERLAND", 77.5 * mm, "Mono", 10.5,
              color=IDC.data)
     swiss_cross(c, X(32.3), _at(top, 11.2), 3.3 * mm, ci)
-    for i, ln in enumerate((f"IDENTITÄTSKARTE {SEP} CARTE D'IDENTITÉ", f"CARTA D'IDENTITÀ {SEP} CARTA D'IDENTITAD",
-                            "IDENTITY CARD")):
-        mono_label(c, X(36.9), _at(top, 8.9 + i * 1.25), ln, 3.9)
-    data_text(c, X(65.6), _at(top, 10.1), p.doc_number, 10.0, max_w=19 * mm)
+    # Dokumentnummer rechtsbündig; Titelzeilen links davon, bei Bedarf verkleinert (kein Überlappen)
+    doc_size = 10.0
+    while doc_size > 6 and pdfmetrics.stringWidth(p.doc_number, "Mono", doc_size) > 19 * mm:
+        doc_size -= 0.2
+    doc_x = X(ID_W - 2.0) - pdfmetrics.stringWidth(p.doc_number, "Mono", doc_size)
+    titles = (f"IDENTITÄTSKARTE {SEP} CARTE D'IDENTITÉ", f"CARTA D'IDENTITÀ {SEP} CARTA D'IDENTITAD", "IDENTITY CARD")
+    title_size, title_max = 3.9, doc_x - X(36.9) - 1.2 * mm
+    while title_size > 2.8 and max(mono_label_width(t, title_size) for t in titles) > title_max:
+        title_size -= 0.05
+    for i, ln in enumerate(titles):
+        mono_label(c, X(36.9), _at(top, 8.9 + i * 1.25), ln, title_size)
+    data_text(c, doc_x, _at(top, 10.1), p.doc_number, doc_size)
 
     px, py, pw, ph = X(3.9), _at(top, 42.2), 26.4 * mm, 31.6 * mm
     if p.photo_seed is None:
