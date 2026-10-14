@@ -5,3 +5,4 @@ __pycache__/
 fonts/*.ttf
 fonts/*.otf
 !fonts/OCR-B.ttf
+data/

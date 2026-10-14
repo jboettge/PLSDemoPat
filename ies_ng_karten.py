@@ -32,6 +32,7 @@ from reportlab.pdfgen.canvas import Canvas
 
 from ies_ng_avatar import draw_avatar
 from ies_ng_mrz import TD1, corrupt, make_td1, validate_td1
+from ies_ng_adressen import find_register, is_register, load_register
 from synthetic_people import GenConfig, generate_people, read_ch_addresses, read_ch_names
 
 # -------------------------
@@ -156,26 +157,31 @@ DEMO_LAST = [
     ("Graf", 60), ("Roth", 60), ("Rossi", 50), ("Favre", 40), ("Bianchi", 40), ("Kälin", 30),
     ("Bürgi", 30), ("Lüthi", 30), ("Dubois", 25), ("Rüegg", 20), ("von Gunten", 15), ("Da Silva", 15),
 ]
-# Fiktive Strassennamen, reale PLZ/Orte
-DEMO_PLACES = [
-    ("8001", "Zürich", "ZH"), ("3011", "Bern", "BE"), ("4051", "Basel", "BS"), ("1003", "Lausanne", "VD"),
-    ("1204", "Genève", "GE"), ("6003", "Luzern", "LU"), ("9000", "St. Gallen", "SG"), ("6900", "Lugano", "TI"),
-    ("2502", "Biel/Bienne", "BE"), ("8400", "Winterthur", "ZH"), ("5000", "Aarau", "AG"), ("7000", "Chur", "GR"),
-    ("1700", "Fribourg", "FR"), ("6300", "Zug", "ZG"), ("3900", "Brig", "VS"), ("8500", "Frauenfeld", "TG"),
-]
-DEMO_STREETS = ["Musterstrasse", "Übungsweg", "Lindenallee", "Rue de l'Exemple", "Via Campione",
-                "Ausbildungsgasse", "Bahnhofplatz", "Schulhausstrasse", "Chemin des Essais", "Seeweg"]
+def demo_names() -> tuple[pd.DataFrame, pd.DataFrame]:
+    return (pd.DataFrame(DEMO_FIRST, columns=["first_name", "gender", "freq"]),
+            pd.DataFrame(DEMO_LAST, columns=["last_name", "freq"]))
 
 
-def demo_inputs(r: np.random.Generator) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    fn = pd.DataFrame(DEMO_FIRST, columns=["first_name", "gender", "freq"])
-    ln = pd.DataFrame(DEMO_LAST, columns=["last_name", "freq"])
-    rows = []
-    for plz, city, kt in DEMO_PLACES:
-        for st in DEMO_STREETS:
-            rows.append({"street": st, "house_number": str(int(r.integers(1, 120))),
-                         "postcode": plz, "city": city, "canton": kt})
-    return pd.DataFrame(rows), fn, ln
+def load_addresses(args: argparse.Namespace) -> pd.DataFrame:
+    """Nur echte Adressen: amtliches Gebäudeadressverzeichnis (swisstopo) oder eigene Adressdatei."""
+    src = Path(args.addresses) if args.addresses else find_register()
+    if src is None:
+        raise SystemExit(
+            "Keine Adressdaten. Echte Adressen sind Pflicht:\n"
+            "  python ies_ng_adressen.py --download        (amtliches Gebäudeadressverzeichnis nach data/)\n"
+            "  oder --addresses <register.csv.zip | auszug.csv>")
+    if is_register(src):
+        addr = load_register(src, args.canton, args.plz, args.gemeinde, args.wohngebaeude)
+    else:
+        addr = read_ch_addresses(src)
+        if args.canton and "canton" in addr:
+            addr = addr[addr["canton"].str.upper().isin([c.upper() for c in args.canton])]
+        if args.plz:
+            addr = addr[addr["postcode"].isin(args.plz)]
+    if addr.empty:
+        raise SystemExit("Nach Filter keine Adressen übrig.")
+    print(f"{len(addr)} echte Adressen aus {src.name}")
+    return addr
 
 
 @dataclass
@@ -658,8 +664,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--p-red-pattern", type=float, default=0.40,
                    help="Anteil Roter mit genau einem Verletzungsmuster")
 
-    g = ap.add_argument_group("Daten (ohne Angabe: eingebaute Demo-Daten)")
-    g.add_argument("--addresses")
+    g = ap.add_argument_group("Adressen (nur echte; Default: Register in data/)")
+    g.add_argument("--addresses", help="Gebäudeadressverzeichnis (.csv/.csv.zip) oder eigener Auszug")
+    g.add_argument("--canton", nargs="*", help="z. B. BE FR")
+    g.add_argument("--plz", nargs="*")
+    g.add_argument("--gemeinde", nargs="*")
+    g.add_argument("--wohngebaeude", action="store_true", help="nur Wohngebäude")
+
+    g = ap.add_argument_group("Namen (ohne Angabe: eingebaute Demo-Listen)")
     g.add_argument("--first-names")
     g.add_argument("--last-names")
 
@@ -682,11 +694,11 @@ def main(argv: Optional[list[str]] = None) -> None:
               "(--font-mrz oder fonts/OCRB.ttf).")
 
     r = np.random.default_rng(args.seed)
-    if args.addresses and args.first_names and args.last_names:
-        addr = read_ch_addresses(args.addresses)
+    addr = load_addresses(args)
+    if args.first_names and args.last_names:
         fn, ln = read_ch_names(args.first_names, args.last_names)
     else:
-        addr, fn, ln = demo_inputs(r)
+        fn, ln = demo_names()
 
     cfg = GenConfig()
     people = generate_people(args.count * (3 if args.adults_only else 1), addr, fn, ln, cfg=cfg,

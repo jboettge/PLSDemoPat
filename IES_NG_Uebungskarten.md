@@ -19,6 +19,19 @@ Alle IDs tragen «SPECIMEN», Dokumentnummern beginnen mit `X` (fiktiv).
 - Kontrolle: Kontrollmass links neben der Vorderseite muss nachgemessen 50 mm sein
 - Für A4-Drucker `--layout a4` verwenden, dann mit Papierschneider auf A6 schneiden
 
+## Echte Adressen (Pflicht)
+Adressen stammen ausschliesslich aus dem **amtlichen Gebäudeadressverzeichnis** (swisstopo, OGD,
+Quellenangabe «Quelle: swisstopo»). Erfundene Adressen gibt es nicht mehr; ohne Daten bricht das Skript ab.
+- Übernahme unverändert: Strasse, Hausnummer (inkl. `12a`, `1.1`), PLZ, Ort, Kanton, Koordinaten (LV95 → WGS84)
+- Nur Status «real», nur Adressen mit Hausnummer, keine Duplikate
+- Mehrere Personen eines Haushalts teilen dieselbe Adresse
+
+```bash
+python ies_ng_adressen.py --download                        # Register nach data/ (nicht im Repo)
+python ies_ng_adressen.py --canton BE --wohngebaeude -o data/adressen_be.csv   # optionaler Auszug
+python ies_ng_karten.py -n 50 --canton BE --wohngebaeude    # Karten mit echten Berner Wohnadressen
+```
+
 ## Nutzung
 ```bash
 pip install -r requirements.txt
@@ -45,7 +58,9 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | `--no-photos` | aus | Platzhalter statt Comic-Passfoto |
 | `--p-red`, `--p-yellow` | 0.15, 0.30 | Prä-Triage Rot/Gelb, Rest Grün (0.55) |
 | `--p-red-pattern` | 0.40 | Anteil Roter mit genau einem Verletzungsmuster |
-| `--addresses/--first-names/--last-names` | Demo-Daten | echte Register (siehe `synthetic_people.py`) |
+| `--addresses` | neuestes Register in `data/` | amtliches Gebäudeadressverzeichnis oder eigener Auszug |
+| `--canton`, `--plz`, `--gemeinde`, `--wohngebaeude` | – | Adressfilter |
+| `--first-names/--last-names` | Demo-Listen | Namensregister (siehe `synthetic_people.py`) |
 | `--logo`, `--font-*` | gezeichnet / Liberation / DejaVu Mono | CI-Assets |
 
 ## Prä-Triage
