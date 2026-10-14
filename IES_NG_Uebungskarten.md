@@ -11,6 +11,29 @@ Ausbildungsmaterial mit fiktiven Personen: Schweizer ID (Vorder-/Rückseite, MRZ
 Passfoto: comicartiges Vektor-Porträt passend zu Alter und Geschlecht (`ies_ng_avatar.py`), pro Karte reproduzierbar (Seed + Kartennummer).
 Alle IDs tragen «SPECIMEN», Dokumentnummern beginnen mit `X` (fiktiv).
 
+## PNG-Export (Android-Emulator)
+```bash
+python ies_ng_karten.py -n 50 --png                          # png/CHY0001_card.png, _qr.png, _mrz.png
+python ies_ng_karten.py -n 50 --png emulator --png-parts qr mrz back
+```
+| Teil | Inhalt | Zweck |
+|---|---|---|
+| `card` | ganze A6-Karte (300 dpi) | Gesamtansicht |
+| `front`, `back` | ID-Seite freigestellt, weisser Rand | Ausweis scannen |
+| `mrz` | nur MRZ, weisser Rand | MRZ-Erkennung |
+| `qr` | nur QR (`segno`, Ruhezone 6 Module) | QR-Scan |
+
+Teile werden **freigestellt** auf weissem Grund gerendert (keine Nachbarelemente, die den Scanner stören).
+Optionen: `--png-dpi` (300), `--png-crop-zoom` (2 → 600 dpi für front/back/mrz), `--png-margin` (6 mm).
+Benötigt `pymupdf`.
+
+Im Emulator hinterlegen (Android Studio, Bezeichnungen je nach Version leicht abweichend):
+1. AVD bearbeiten → *Advanced Settings* → Camera *Back* = **VirtualScene**
+2. Emulator starten → *Extended Controls* (`…`) → **Camera** → *Virtual scene images*: PNG für *Wall* bzw. *Table* wählen
+3. In der App die Kamera öffnen, mit `Alt`/`Option` + Maus/WASD zum Bild «gehen», bis QR/MRZ gross im Bild ist
+- Für QR am besten `_qr.png`, für MRZ `_mrz.png` oder `_back.png` hinterlegen
+- Alternative: Webcam als Emulator-Kamera (`webcam0`) und PNG am Bildschirm/Tablet davor zeigen
+
 ## Originalgrösse
 - ID im PDF exakt 85.6 × 54 mm (ISO/IEC 7810 ID-1), gemessen in A6- und A4-Layout
 - PDF-Vorgabe «PrintScaling = None»: Druckdialog startet mit tatsächlicher Grösse
@@ -81,6 +104,7 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | `--p-expired` | 0 | Anteil abgelaufener Ausweise |
 | `--adults-only` | aus | nur Erwachsene |
 | `--no-photos` | aus | Platzhalter statt Comic-Passfoto |
+| `--png [ORDNER]`, `--png-parts` | aus; card qr mrz | PNG-Export, z. B. für Android-Emulator |
 | `--p-red`, `--p-yellow` | 0.15, 0.30 | Prä-Triage Rot/Gelb, Rest Grün (0.55) |
 | `--p-red-pattern` | 0.40 | Anteil Roter mit genau einem Verletzungsmuster |
 | `--addresses` | neuestes Register in `data/` | amtliches Gebäudeadressverzeichnis oder eigener Auszug |

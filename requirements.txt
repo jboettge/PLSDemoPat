@@ -6,5 +6,7 @@ segno
 pyarrow
 # optional: BFS-Excel-Dateien
 openpyxl
+# optional: PNG-Export (--png)
+pymupdf
 # OTF-Schriften (z. B. OCR-B .otf) automatisch nach TTF wandeln
 fontTools

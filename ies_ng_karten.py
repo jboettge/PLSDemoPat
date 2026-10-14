@@ -72,7 +72,8 @@ INJURY_PATTERNS = (
 HERE = Path(__file__).resolve().parent
 ID_W, ID_H, ID_R = 85.6, 54.0, 3.18      # ID-1 (ISO/IEC 7810), mm
 MRZ_PITCH, MRZ_LINE = 2.54, 4.23          # 10 Zeichen/Zoll, 6 Zeilen/Zoll
-MRZ_CAP_MM = 2.4                          # Zeichenhöhe OCR-B Grösse 1
+MRZ_CAP_MM = 2.4
+MRZ_ZONE_MM = 16.5                        # Höhe der weissen MRZ-Zone auf der Rückseite                          # Zeichenhöhe OCR-B Grösse 1
 
 FONT_CANDIDATES = {
     "Sans": ["fonts/Frutiger-Roman.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
@@ -465,7 +466,7 @@ def draw_id_back(c: Canvas, x: float, y: float, p: CardPerson, ci: CI) -> None:
     watermark(c, x + 62 * mm, y + 31 * mm, ci, 18)
 
     # MRZ-Zone frei von Hintergrund/Wasserzeichen halten
-    zone_h = 16.5 * mm
+    zone_h = MRZ_ZONE_MM * mm
     c.setFillColor(white)
     c.roundRect(x + 0.8 * mm, y + 0.8 * mm, (ID_W - 1.6) * mm, zone_h - 0.8 * mm, (ID_R - 0.8) * mm,
                 stroke=0, fill=1)
@@ -618,6 +619,62 @@ def render_pdf(cards: list[CardPerson], out: Path, args: argparse.Namespace, ci:
     c.save()
 
 
+PNG_PARTS = ("card", "front", "back", "mrz", "qr")
+
+
+def export_png(cards: list[CardPerson], out_dir: Path, args: argparse.Namespace, ci: CI) -> int:
+    """
+    PNG je Karte und Teil (z. B. für die virtuelle Kamera des Android-Emulators).
+    Teile werden freigestellt auf weissem Grund gerendert (keine Nachbarelemente im Bild).
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        raise SystemExit("PNG-Export benötigt pymupdf: pip install pymupdf")
+    import io
+
+    pad = args.png_margin * mm
+    sizes = {"card": A6, "front": (ID_W * mm + 2 * pad, ID_H * mm + 2 * pad),
+             "back": (ID_W * mm + 2 * pad, ID_H * mm + 2 * pad),
+             "mrz": (ID_W * mm + 2 * pad, MRZ_ZONE_MM * mm + 2 * pad)}
+    pdf_parts = [pt for pt in args.png_parts if pt in sizes]
+
+    buf = io.BytesIO()
+    c = Canvas(buf, pagesize=A6)
+    order = []
+    for p in cards:
+        for part in pdf_parts:
+            c.setPageSize(sizes[part])
+            c.setFillColor(white)
+            c.rect(0, 0, *sizes[part], stroke=0, fill=1)
+            if part == "card":
+                draw_card(c, 0, 0, p, ci, args)
+            elif part == "front":
+                draw_id_front(c, pad, pad, p, ci)
+            elif part == "back":
+                draw_id_back(c, pad, pad, p, ci)
+            else:
+                draw_mrz(c, pad, pad - 0.8 * mm, p.td1)
+            c.showPage()
+            order.append((p.card_id, part))
+    c.save()
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    n = 0
+    if order:
+        doc = pymupdf.open(stream=buf.getvalue(), filetype="pdf")
+        for page, (cid, part) in zip(doc, order):
+            dpi = args.png_dpi if part == "card" else args.png_dpi * args.png_crop_zoom
+            page.get_pixmap(dpi=int(dpi), alpha=False).save(out_dir / f"{cid}_{part}.png")
+            n += 1
+    if "qr" in args.png_parts:
+        for p in cards:
+            qr = segno.make_qr(p.qr_payload, version=2, mode="byte", error=args.qr_error, boost_error=False)
+            qr.save(out_dir / f"{p.card_id}_qr.png", scale=24, border=6)
+            n += 1
+    return n
+
+
 def write_key(cards: list[CardPerson], path: Path) -> None:
     cols = ["card_id", "qr_payload", "last_name", "first_name", "gender", "dob", "street", "house_number",
             "postcode", "city", "canton", "origin", "height_cm", "doc_number", "issue_date", "expiry",
@@ -645,6 +702,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--digits", type=int, default=4)
     g.add_argument("--max-number", type=int, default=2000, help="höchste erlaubte Nummer (CHY2000)")
     g.add_argument("--layout", choices=["a6", "a4"], default="a6", help="a6 = 1 Karte/Seite, a4 = 4 Karten/Seite")
+
+    g = ap.add_argument_group("PNG-Export (z. B. Android-Emulator, virtuelle Kamera)")
+    g.add_argument("--png", nargs="?", const="png", metavar="ORDNER",
+                   help="PNGs erzeugen (Default-Ordner: png/ neben dem PDF)")
+    g.add_argument("--png-parts", nargs="+", choices=PNG_PARTS, default=["card", "qr", "mrz"],
+                   help="card = ganze Karte, front/back = ID-Seite, mrz = nur MRZ, qr = nur QR-Code")
+    g.add_argument("--png-dpi", type=int, default=300, help="Auflösung ganze Karte")
+    g.add_argument("--png-crop-zoom", type=float, default=2.0, help="Faktor auf --png-dpi für front/back/mrz")
+    g.add_argument("--png-margin", type=float, default=6.0, help="weisser Rand um front/back/mrz, mm")
     g.add_argument("--no-cut-marks", dest="cut_marks", action="store_false")
     g.add_argument("-o", "--out", default="ies_ng_karten.pdf")
     g.add_argument("--key", default=None, help="Lösungsliste CSV (Default: <out>_loesungen.csv)")
@@ -727,6 +793,10 @@ def main(argv: Optional[list[str]] = None) -> None:
     render_pdf(cards, out, args, CI())
     key = Path(args.key) if args.key else out.with_name(out.stem + "_loesungen.csv")
     write_key(cards, key)
+    if args.png:
+        png_dir = Path(args.png) if Path(args.png).is_absolute() else out.parent / args.png
+        n = export_png(cards, png_dir, args, CI())
+        print(f"{n} PNG -> {png_dir}")
     print(f"{len(cards)} Karten {cards[0].card_id}–{cards[-1].card_id} -> {out} ({args.layout}), Lösungen -> {key}")
 
 
