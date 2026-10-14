@@ -30,6 +30,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
+from ies_ng_avatar import draw_avatar
 from ies_ng_mrz import TD1, corrupt, make_td1, validate_td1
 from synthetic_people import GenConfig, generate_people, read_ch_addresses, read_ch_names
 
@@ -201,6 +202,7 @@ class CardPerson:
     td1: TD1
     mrz_error: str = ""
     triage: str = "gruen"
+    photo_seed: Optional[tuple[int, int]] = None
     injury: str = ""
     checks: dict = field(default_factory=dict)
 
@@ -300,6 +302,7 @@ def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Gen
             serial=f"{int(r.integers(10, 99))}TRNG{n:09d}", issue_date=issue, expiry=expiry,
             authority=f"Kanton {canton}" if canton else str(p.city), td1=td1, mrz_error=err,
             checks=validate_td1(td1),
+            photo_seed=None if args.no_photos else (args.seed, n),
         ))
     assign_triage(cards, args, r)
     return cards
@@ -384,7 +387,14 @@ def draw_id_front(c: Canvas, x: float, y: float, p: CardPerson, ci: CI) -> None:
          "IDENTITÄTSKARTE  CARTE D'IDENTITÉ  CARTA D'IDENTITÀ  IDENTITY CARD", "Sans-Bold", 4.0, ci.red)
 
     px, py, pw, ph = x + 3 * mm, y + 9 * mm, 23 * mm, 30 * mm
-    photo_placeholder(c, px, py, pw, ph, ci)
+    if p.photo_seed is None:
+        photo_placeholder(c, px, py, pw, ph, ci)
+    else:
+        age = date.today().year - p.dob.year - ((date.today().month, date.today().day) < (p.dob.month, p.dob.day))
+        draw_avatar(c, px, py, pw, ph, age, p.gender, np.random.default_rng(p.photo_seed))
+        c.setStrokeColor(ci.line)
+        c.setLineWidth(0.3)
+        c.rect(px, py, pw, ph, stroke=1, fill=0)
     text(c, px + pw / 2, py - 3.2 * mm, f"{p.expiry.year} / {p.doc_number}", "Sans", 4.2, ci.grey, "c")
 
     fx, fw = x + 29.5 * mm, 52 * mm
@@ -640,6 +650,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--p-invalid-mrz", type=float, default=0.0, help="Anteil MRZ mit falscher Prüfziffer")
     g.add_argument("--p-expired", type=float, default=0.0, help="Anteil abgelaufener Ausweise")
     g.add_argument("--adults-only", action="store_true")
+    g.add_argument("--no-photos", action="store_true", help="Platzhalter statt Comic-Passfoto")
 
     g = ap.add_argument_group("Prä-Triage")
     g.add_argument("--p-red", type=float, default=0.15, help="Anteil Rot")

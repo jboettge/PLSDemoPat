@@ -8,6 +8,7 @@ Ausbildungsmaterial mit fiktiven Personen: Schweizer ID (Vorder-/Rückseite, MRZ
 3. ID Rückseite mit MRZ: 3 × 30 Zeichen, Teilung 2.54 mm, Zeilenabstand 4.23 mm, weisse Zone ohne Wasserzeichen
 4. Fuss: Kartennummer, Name, Wohnadresse, ggf. Verletzungsmuster, Hinweis «fiktiv»; Prä-Triage-Feld und QR unten rechts
 
+Passfoto: comicartiges Vektor-Porträt passend zu Alter und Geschlecht (`ies_ng_avatar.py`), pro Karte reproduzierbar (Seed + Kartennummer).
 Alle IDs tragen «SPECIMEN», Dokumentnummern beginnen mit `X` (fiktiv).
 
 ## Originalgrösse
@@ -41,6 +42,7 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | `--p-invalid-mrz` | 0 | Anteil falscher Prüfziffern (Feld in Lösungsliste) |
 | `--p-expired` | 0 | Anteil abgelaufener Ausweise |
 | `--adults-only` | aus | nur Erwachsene |
+| `--no-photos` | aus | Platzhalter statt Comic-Passfoto |
 | `--p-red`, `--p-yellow` | 0.15, 0.30 | Prä-Triage Rot/Gelb, Rest Grün (0.55) |
 | `--p-red-pattern` | 0.40 | Anteil Roter mit genau einem Verletzungsmuster |
 | `--addresses/--first-names/--last-names` | Demo-Daten | echte Register (siehe `synthetic_people.py`) |
@@ -52,6 +54,14 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
   behebbare Atemwegsverlegung, arterielle Blutung, Verbrennung Grad 2–3 > 60 % KOF, Schnappatmung
 - Bei wenigen Roten wird der Rest zufällig gerundet (Erwartungswert 40 %)
 - Lösungsliste: Spalten `triage`, `injury_pattern`
+
+## Comic-Passfotos
+- Alter: Babys (kaum Haare), Kinder (runder Kopf, grosse Augen, Wangen), ab 40 Stirnfalten, ab 45 Nasolabialfalten,
+  ab 50 Tränensäcke, ab 60 Krähenfüsse; Grau-/Weissanteil der Haare und Brillenquote steigen mit dem Alter
+- Geschlecht: Frisuren, Bart (Männer ab 18), Wimpern, Lippenfarbe, Ohrringe; `x` = zufällige Darstellung
+- Vielfalt: 6 Hauttöne, 6 Haarfarben, 12 Frisuren, Kleiderfarben
+- Passbild-Ausschnitt: Kopf ca. 75 % der Bildhöhe, frontal, neutraler Ausdruck, heller Hintergrund
+- Vorschau aller Altersstufen: `python ies_ng_avatar.py -o avatar_vorschau.pdf`
 
 ## Umsetzung der Erkenntnisse (`QR_MRZ_Erkenntnisse.md`)
 | Erkenntnis | Umsetzung |
