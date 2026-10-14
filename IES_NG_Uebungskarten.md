@@ -27,7 +27,7 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | `-n/--count` | 20 | Anzahl Karten |
 | `--start` | 1 | erste Nummer |
 | `--prefix`, `--digits`, `--max-number` | CHY, 4, 2000 | Nummernkreis CHY0001–CHY2000 (Überschreitung = Abbruch) |
-| `--qr-format` | `(dc\|{id}\|{id})` | Payload wie CHA-Etiketten |
+| `--qr-format` | `{id}` | Payload nur Kartennummer (z. B. `CHY0003`); CHA-Format `(dc\|{id}\|{id})` wird von der IES-NG-App als `DCCHY0003CHY0003` gelesen |
 | `--qr-error` | m | ECC (L/M/Q; H passt nicht in Version 2) |
 | `--layout` | a6 | `a6` oder `a4` (4-up) |
 | `--p-invalid-mrz` | 0 | Anteil falscher Prüfziffern (Feld in Lösungsliste) |
@@ -48,7 +48,7 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 ## Umsetzung der Erkenntnisse (`QR_MRZ_Erkenntnisse.md`)
 | Erkenntnis | Umsetzung |
 |---|---|
-| QR Version 2, Byte-Modus, `(dc\|id\|label)` | `segno`, fix Version 2, Payload konfigurierbar |
+| QR Version 2, Byte-Modus, `(dc\|id\|label)` | `segno`, fix Version 2; Payload `{id}`, da die App das CHA-Format nicht auf die ID reduziert |
 | ECC unbestimmt | `--qr-error`, Default M |
 | MRZ TD1, 7-3-1, Gesamtprüfziffer | `ies_ng_mrz.py`, gegen Specimen (Dok.-Nr. 9, Geb. 5) und Lib `mrz` geprüft |
 | Specimen-MRZ ungültig | nicht verwendet; Negativfälle gezielt via `--p-invalid-mrz` |

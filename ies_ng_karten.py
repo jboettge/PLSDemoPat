@@ -614,7 +614,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--doc-prefix", default="X", help="1. Zeichen der fiktiven Dokumentnummer")
 
     g = ap.add_argument_group("QR")
-    g.add_argument("--qr-format", default="(dc|{id}|{id})", help="Payload, {id} = Kartennummer")
+    g.add_argument("--qr-format", default="{id}",
+                   help="Payload, {id} = Kartennummer; CHA-Format: \"(dc|{id}|{id})\"")
     g.add_argument("--qr-error", choices=["l", "m", "q"], default="m", help="ECC-Stufe (Version 2)")
     g.add_argument("--qr-size", type=float, default=17.0, help="Kantenlänge inkl. Ruhezone, mm")
 
