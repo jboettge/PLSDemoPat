@@ -33,7 +33,18 @@ python ies_ng_karten.py -n 50 --canton BE --wohngebaeude    # Karten mit echten 
 ```
 
 ## Namen nach BFS-Verteilung
-Dateien in `data/` ablegen (werden automatisch gefunden) oder per `--first-names/--last-names` übergeben:
+Download (sucht die aktuellen BFS-Datensätze auf opendata.swiss, lädt nach `data/` und prüft sie):
+```bash
+python ies_ng_namen_download.py            # beide Dateien
+python ies_ng_namen_download.py --list     # nur Kandidaten anzeigen
+python ies_ng_namen_download.py --px-vornamen <STAT-TAB-ID>   # alternativ direkt aus STAT-TAB
+python ies_ng_namen_download.py --url-nachnamen <URL>          # alternativ direkte URL
+```
+Auswahl: nur Datensätze des BFS; bevorzugt «nach Geburtsjahr/Geschlecht» bzw. «nach Kanton»,
+Neugeborenen-Statistiken werden ausgeschlossen; CSV vor XLSX; bei Gleichstand der neueste.
+Herkunft je Datei in `data/*_bfs.source.json` (Quellenangabe «Quelle: BFS»).
+
+Alternativ Dateien manuell in `data/` ablegen (werden automatisch gefunden) oder per `--first-names/--last-names` übergeben:
 - `data/vornamen*.csv|xlsx`: BFS Vornamen der ständigen Wohnbevölkerung **nach Geburtsjahr und Geschlecht**
 - `data/nachnamen*.csv|xlsx`: BFS Nachnamen der ständigen Wohnbevölkerung **nach Kanton**
 

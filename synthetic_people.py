@@ -112,11 +112,14 @@ def _parse_year(s: pd.Series) -> pd.Series:
 
 def _melt_year_columns(df: pd.DataFrame, freq_col: str, year_col: str) -> pd.DataFrame:
     """Breitformat (Jahre als Spalten, typisch BFS-Export) -> Langformat."""
-    years = [c for c in df.columns if re.fullmatch(r"\d{4}", str(c))]
+    # Spalten wie "1990", "Geburtsjahr 1990", "1990 Anzahl"
+    years = [c for c in df.columns if re.fullmatch(r"[^\d]*(?<!\d)(1[89]\d\d|20\d\d)(?!\d)[^\d]*", str(c))]
     if not years or freq_col in df.columns:
         return df
     ids = [c for c in df.columns if c not in years]
-    return df.melt(id_vars=ids, value_vars=years, var_name=year_col, value_name=freq_col)
+    out = df.melt(id_vars=ids, value_vars=years, var_name=year_col, value_name=freq_col)
+    out[year_col] = out[year_col].astype(str).str.extract(r"(\d{4})")[0]
+    return out
 
 
 HEADER_HINTS = {"vorname", "vornamen", "nachname", "nachnamen", "prénom", "prenom", "nom", "first_name",
@@ -137,7 +140,10 @@ def _read_any(path: Path) -> pd.DataFrame:
         df.columns = [c[:-2] if re.fullmatch(r"\d{4}\.0", c) else c for c in df.columns]
         return df.dropna(how="all")
     # sep=None erkennt ',' und ';' (BFS/swisstopo); dtype=str schützt PLZ/Hausnummern
-    return pd.read_csv(path, sep=None, engine="python", dtype=str, encoding="utf-8-sig")
+    try:
+        return pd.read_csv(path, sep=None, engine="python", dtype=str, encoding="utf-8-sig")
+    except UnicodeDecodeError:  # ältere BFS-/PX-Exporte
+        return pd.read_csv(path, sep=None, engine="python", dtype=str, encoding="latin-1")
 
 
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
@@ -233,53 +239,66 @@ def read_ch_addresses(path: str | Path, cols: Columns = Columns()) -> pd.DataFra
 # 2) Namen lesen
 # -------------------------
 
+def read_first_names(path: str | Path, ncols: NameCols = NameCols()) -> pd.DataFrame:
+    """
+    Vornamen: first_name, freq [, gender, birth_year, canton].
+    Unterstützt BFS-Exporte (CSV/XLSX, Lang- oder Breitformat mit Jahren als Spalten).
+    Gender -> m/f/x, Kanton -> Kürzel, Jahresbereiche -> Mitte. Totale/unterdrückte Werte entfernt.
+    """
+    fn = _apply_aliases(_normalize_cols(_read_any(Path(path))), FN_ALIASES, ncols)
+    fn = _melt_year_columns(fn, ncols.first_freq, ncols.year)
+    _ensure_columns(fn, [ncols.first, ncols.first_freq], "first_names")
+    fn[ncols.gender] = normalize_gender(fn[ncols.gender]) if ncols.gender in fn.columns else "x"
+    fn[ncols.first] = _clean_str(fn[ncols.first])
+    fn[ncols.first_freq] = pd.to_numeric(fn[ncols.first_freq], errors="coerce")
+    fn = fn[fn[ncols.first].notna() & ~fn[ncols.first].str.lower().isin(_TOTAL_LABELS)]
+    fn = fn[fn[ncols.first_freq] > 0].copy()  # BFS: 'X'/'...' (unterdrückt) und 0 entfernen
+
+    keys = [ncols.first, ncols.gender]
+    if ncols.year in fn.columns:
+        fn[ncols.year] = _parse_year(fn[ncols.year])
+        fn = fn[fn[ncols.year].notna()]
+        keys.append(ncols.year)
+    fn = _canton_rows(fn, ncols.canton, keys)
+    fn = fn.groupby(keys, as_index=False)[ncols.first_freq].sum().astype({ncols.first: str})
+    if fn.empty:
+        raise ValueError(f"{path}: keine Vornamen nach Bereinigung.")
+    return fn
+
+
+def read_last_names(path: str | Path, ncols: NameCols = NameCols()) -> pd.DataFrame:
+    """Nachnamen: last_name, freq [, canton]. Gleiche Format-Toleranz wie Vornamen."""
+    ln = _apply_aliases(_normalize_cols(_read_any(Path(path))), LN_ALIASES, ncols)
+    _ensure_columns(ln, [ncols.last, ncols.last_freq], "last_names")
+    ln[ncols.last] = _clean_str(ln[ncols.last])
+    ln[ncols.last_freq] = pd.to_numeric(ln[ncols.last_freq], errors="coerce")
+    ln = ln[ln[ncols.last].notna() & ~ln[ncols.last].str.lower().isin(_TOTAL_LABELS)]
+    ln = ln[ln[ncols.last_freq] > 0].copy()
+    keys = [ncols.last]
+    ln = _canton_rows(ln, ncols.canton, keys)
+    ln = ln.groupby(keys, as_index=False)[ncols.last_freq].sum().astype({ncols.last: str})
+    if ln.empty:
+        raise ValueError(f"{path}: keine Nachnamen nach Bereinigung.")
+    return ln
+
+
+def _canton_rows(df: pd.DataFrame, col: str, keys: list[str]) -> pd.DataFrame:
+    """Kantonszeilen behalten (Schweiz-Total verwerfen); ohne Kantonsangaben Spalte entfernen."""
+    if col not in df.columns:
+        return df
+    df[col] = normalize_canton(df[col])
+    if df[col].notna().any():
+        keys.append(col)
+        return df[df[col].notna()]
+    return df.drop(columns=[col])
+
+
 def read_ch_names(
     first_names_path: str | Path,
     last_names_path: str | Path,
     ncols: NameCols = NameCols(),
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Vornamen: first_name, freq [, gender, birth_year, canton]. Nachnamen: last_name, freq [, canton].
-    Unterstützt BFS-Exporte (CSV/XLSX, Lang- oder Breitformat mit Jahren als Spalten).
-    Gender -> m/f/x, Kanton -> Kürzel, Jahresbereiche -> Mitte. Gesamttotal-Zeilen werden entfernt.
-    """
-    fn = _apply_aliases(_normalize_cols(_read_any(Path(first_names_path))), FN_ALIASES, ncols)
-    ln = _apply_aliases(_normalize_cols(_read_any(Path(last_names_path))), LN_ALIASES, ncols)
-    fn = _melt_year_columns(fn, ncols.first_freq, ncols.year)
-
-    _ensure_columns(fn, [ncols.first, ncols.first_freq], "first_names")
-    _ensure_columns(ln, [ncols.last, ncols.last_freq], "last_names")
-
-    fn[ncols.gender] = normalize_gender(fn[ncols.gender]) if ncols.gender in fn.columns else "x"
-    fn[ncols.first] = _clean_str(fn[ncols.first])
-    ln[ncols.last] = _clean_str(ln[ncols.last])
-    fn[ncols.first_freq] = pd.to_numeric(fn[ncols.first_freq], errors="coerce")
-    ln[ncols.last_freq] = pd.to_numeric(ln[ncols.last_freq], errors="coerce")
-
-    fn = fn[fn[ncols.first].notna() & ~fn[ncols.first].str.lower().isin(_TOTAL_LABELS)]
-    ln = ln[ln[ncols.last].notna() & ~ln[ncols.last].str.lower().isin(_TOTAL_LABELS)]
-    # BFS: unterdrückte Werte ('X', '...') und 0 entfernen
-    fn = fn[fn[ncols.first_freq] > 0]
-    ln = ln[ln[ncols.last_freq] > 0]
-
-    fn_keys = [ncols.first, ncols.gender]
-    if ncols.year in fn.columns:
-        fn[ncols.year] = _parse_year(fn[ncols.year])
-        fn = fn[fn[ncols.year].notna()]
-        fn_keys.append(ncols.year)
-    for df, keys in ((fn, fn_keys), (ln, [ncols.last])):
-        if ncols.canton in df.columns:
-            df[ncols.canton] = normalize_canton(df[ncols.canton])
-            if df[ncols.canton].notna().any():  # Kantonszeilen vorhanden -> Schweiz-Total verwerfen
-                df.drop(df.index[df[ncols.canton].isna()], inplace=True)
-                keys.append(ncols.canton)
-    fn = fn.groupby(fn_keys, as_index=False)[ncols.first_freq].sum().astype({ncols.first: str})
-    ln = ln.groupby([ncols.last] + ([ncols.canton] if ncols.canton in ln.columns and
-                                    ln[ncols.canton].notna().any() else []),
-                    as_index=False)[ncols.last_freq].sum().astype({ncols.last: str})
-    if fn.empty or ln.empty:
-        raise ValueError("Namensdateien enthalten nach Bereinigung keine Einträge.")
-    return fn, ln
+    return read_first_names(first_names_path, ncols), read_last_names(last_names_path, ncols)
 
 # -------------------------
 # 3) Generator
