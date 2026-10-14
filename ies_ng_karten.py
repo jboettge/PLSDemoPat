@@ -1168,6 +1168,7 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     cards = build_cards(people, args, r)
     out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     render_pdf(cards, out, args, CI())
     key = Path(args.key) if args.key else out.with_name(out.stem + "_loesungen.csv")
     write_key(cards, key)
