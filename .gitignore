@@ -4,3 +4,4 @@ __pycache__/
 *_loesungen.csv
 fonts/*.ttf
 fonts/*.otf
+!fonts/OCR-B.ttf

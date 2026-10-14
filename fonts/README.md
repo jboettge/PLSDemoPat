@@ -1,9 +1,10 @@
-# Schriften (nicht im Repo)
+# Schriften
 
-| Datei | Zweck | Fallback |
+| Datei | Zweck | Lizenz |
 |---|---|---|
-| `OCRB.ttf` | MRZ (ICAO 9303, OCR-B) | DejaVu Sans Mono |
-| `Frutiger-Roman.ttf`, `Frutiger-Bold.ttf` | CD Bund | Liberation Sans |
+| `OCR-B.ttf` | MRZ (ICAO 9303, OCR-B), Standard | OFL, © Raisty, siehe `OCR-B_LICENSE.md` |
+| `Frutiger-Roman.ttf`, `Frutiger-Bold.ttf` (nicht im Repo) | CD Bund | lizenzpflichtig, Fallback Liberation Sans |
 
-Alternativ Pfade per `--font-mrz`, `--font-regular`, `--font-bold` übergeben.
-Frutiger ist lizenzpflichtig (Bezug über BABS/BK). OCR-B frei: CTAN `ocr-b-outline`.
+Andere Schriften per `--font-mrz`, `--font-regular`, `--font-bold` übergeben.
+CFF-basierte `.otf` (z. B. Adobe OCRB) werden automatisch nach `.ttf` gewandelt (benötigt `fontTools`).
+Proprietäre Schriften nicht committen.

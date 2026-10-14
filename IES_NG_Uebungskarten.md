@@ -6,7 +6,7 @@ Ausbildungsmaterial mit fiktiven Personen: Schweizer ID (Vorder-/Rückseite, MRZ
 1. CI-Kopf: Bundeslogo (vereinfacht oder `--logo`), «Bundesamt für Bevölkerungsschutz BABS», «Ausbildung IES NG»
 2. ID Vorderseite, Massstab 1:1 (85.6 × 54 mm, ID-1)
 3. ID Rückseite mit MRZ: 3 × 30 Zeichen, Teilung 2.54 mm, Zeilenabstand 4.23 mm, weisse Zone ohne Wasserzeichen
-4. Fuss: Kartennummer, Name, Wohnadresse, Hinweis «fiktiv»; QR unten rechts
+4. Fuss: Kartennummer, Name, Wohnadresse, ggf. Verletzungsmuster, Hinweis «fiktiv»; Prä-Triage-Feld und QR unten rechts
 
 Alle IDs tragen «SPECIMEN», Dokumentnummern beginnen mit `X` (fiktiv).
 
@@ -33,8 +33,17 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | `--p-invalid-mrz` | 0 | Anteil falscher Prüfziffern (Feld in Lösungsliste) |
 | `--p-expired` | 0 | Anteil abgelaufener Ausweise |
 | `--adults-only` | aus | nur Erwachsene |
+| `--p-red`, `--p-yellow` | 0.15, 0.30 | Prä-Triage Rot/Gelb, Rest Grün (0.55) |
+| `--p-red-pattern` | 0.40 | Anteil Roter mit genau einem Verletzungsmuster |
 | `--addresses/--first-names/--last-names` | Demo-Daten | echte Register (siehe `synthetic_people.py`) |
 | `--logo`, `--font-*` | gezeichnet / Liberation / DejaVu Mono | CI-Assets |
+
+## Prä-Triage
+- Verteilung exakt nach Anteilen (Methode der grössten Reste), Karten zufällig zugeordnet
+- 40 % der Roten erhalten **genau ein** zufälliges Verletzungsmuster:
+  behebbare Atemwegsverlegung, arterielle Blutung, Verbrennung Grad 2–3 > 60 % KOF, Schnappatmung
+- Bei wenigen Roten wird der Rest zufällig gerundet (Erwartungswert 40 %)
+- Lösungsliste: Spalten `triage`, `injury_pattern`
 
 ## Umsetzung der Erkenntnisse (`QR_MRZ_Erkenntnisse.md`)
 | Erkenntnis | Umsetzung |
@@ -49,10 +58,10 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 ## Verifikation (2000 Karten, A4)
 - QR: 2000/2000 dekodiert (zxing-cpp, 300 dpi), Reihenfolge korrekt
 - MRZ: Prüfziffern = Lösungsliste = Lib `mrz`; Ausstellung ≥ Geburt, Ablauf > Ausstellung
-- OCR der MRZ nicht getestet (kein Tesseract)
+- Prä-Triage (2000 Karten): 300 Rot / 600 Gelb / 1100 Grün, 120 Rote mit Muster
+- MRZ-Schrift: OCR-B (OFL, `fonts/OCR-B.ttf`); OCR mit Lesegerät nicht getestet
 
 ## Offen
-1. **OCR-B-Schrift** in `fonts/` ablegen; ohne sie ist die MRZ für Menschen lesbar, für Lesegeräte nur bedingt
-2. **CI**: offizielles Logo (`--logo`) und Frutiger einsetzen; Farbe Rot `#DC0018` prüfen
-3. QR-Präfix `dc` und ECC-Stufe mit Zielsystem klären (siehe Erkenntnisse)
-4. Ablauf-Prüfziffer Specimen gegen fedpol-Spezifikation prüfen
+1. **CI**: offizielles Logo (`--logo`) und Frutiger einsetzen; Farbe Rot `#DC0018` prüfen
+2. QR-Präfix `dc` und ECC-Stufe mit Zielsystem klären (siehe Erkenntnisse)
+3. Ablauf-Prüfziffer Specimen gegen fedpol-Spezifikation prüfen

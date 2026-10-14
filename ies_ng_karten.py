@@ -55,6 +55,19 @@ class CI:
     )
 
 
+TRIAGE = {  # Kategorie: (Beschriftung, Hintergrund, Schrift)
+    "rot": ("ROT", HexColor("#E30613"), white),
+    "gelb": ("GELB", HexColor("#FFD500"), HexColor("#1F1F1F")),
+    "gruen": ("GRÜN", HexColor("#009A44"), white),
+}
+INJURY_PATTERNS = (
+    "Behebbare Atemwegsverlegung",
+    "Arterielle Blutung",
+    "Verbrennung Grad 2–3 > 60 % KOF",
+    "Schnappatmung",
+)
+
+HERE = Path(__file__).resolve().parent
 ID_W, ID_H, ID_R = 85.6, 54.0, 3.18      # ID-1 (ISO/IEC 7810), mm
 MRZ_PITCH, MRZ_LINE = 2.54, 4.23          # 10 Zeichen/Zoll, 6 Zeilen/Zoll
 MRZ_CAP_MM = 2.4                          # Zeichenhöhe OCR-B Grösse 1
@@ -63,9 +76,46 @@ FONT_CANDIDATES = {
     "Sans": ["fonts/Frutiger-Roman.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
     "Sans-Bold": ["fonts/Frutiger-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"],
     "Sign": ["/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"],
-    "MRZ": ["fonts/OCRB.ttf", "fonts/OCR-B.ttf", "fonts/ocrb10.ttf",
+    "MRZ": ["fonts/OCR-B.ttf", "fonts/OCRB.ttf", "fonts/ocrb10.ttf", "fonts/OCRB Regular.otf", "fonts/OCRB.otf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"],
 }
+
+
+def otf_to_ttf(src: Path) -> Path:
+    """CFF-basierte OTF (von reportlab nicht unterstützt) einmalig nach TrueType wandeln (fontTools)."""
+    dst = src.with_suffix(".ttf")
+    if dst.is_file() and dst.stat().st_mtime >= src.stat().st_mtime:
+        return dst
+    from fontTools.pens.cu2quPen import Cu2QuPen
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib import TTFont as FTFont, newTable
+
+    f = FTFont(str(src))
+    if "CFF " not in f:
+        return src
+    gs = f.getGlyphSet()
+    glyf = newTable("glyf")
+    glyf.glyphOrder = f.getGlyphOrder()
+    glyf.glyphs = {}
+    for gname in glyf.glyphOrder:
+        pen = TTGlyphPen(gs)
+        gs[gname].draw(Cu2QuPen(pen, max_err=1.0, reverse_direction=True))
+        glyf.glyphs[gname] = pen.glyph()
+    del f["CFF "]
+    f["glyf"] = glyf
+    f["loca"] = newTable("loca")
+    f["maxp"] = newTable("maxp")
+    f["maxp"].tableVersion = 0x00010000
+    for attr in ("maxZones", "maxTwilightPoints", "maxStorage", "maxFunctionDefs", "maxInstructionDefs",
+                 "maxStackElements", "maxSizeOfInstructions", "maxComponentElements"):
+        setattr(f["maxp"], attr, 0)
+    f["maxp"].maxZones = 1
+    f["head"].glyphDataFormat = 0
+    f["post"].formatType = 2.0
+    f["post"].extraNames, f["post"].mapping = [], {}
+    f.sfntVersion = "\x00\x01\x00\x00"
+    f.save(str(dst))
+    return dst
 
 
 def register_fonts(overrides: dict[str, Optional[str]]) -> dict[str, str]:
@@ -73,7 +123,11 @@ def register_fonts(overrides: dict[str, Optional[str]]) -> dict[str, str]:
     for name, candidates in FONT_CANDIDATES.items():
         paths = [overrides[name]] if overrides.get(name) else candidates
         for p in paths:
+            if not Path(p).is_absolute() and (HERE / p).is_file():
+                p = str(HERE / p)
             if Path(p).is_file():
+                if Path(p).suffix.lower() == ".otf":
+                    p = str(otf_to_ttf(Path(p)))
                 pdfmetrics.registerFont(TTFont(name, p))
                 used[name] = p
                 break
@@ -146,6 +200,8 @@ class CardPerson:
     authority: str
     td1: TD1
     mrz_error: str = ""
+    triage: str = "gruen"
+    injury: str = ""
     checks: dict = field(default_factory=dict)
 
     @property
@@ -165,6 +221,33 @@ def _doc_number(r: np.random.Generator, prefix: str) -> str:
     L = lambda: chr(int(r.integers(65, 91)))
     D = lambda: str(int(r.integers(0, 10)))
     return f"{prefix}{D()}{L()}{D()}{D()}{L()}{D()}{D()}"
+
+
+def allocate_exact(n: int, shares: dict[str, float], r: np.random.Generator) -> list[str]:
+    """Exakte Anteile (Methode der grössten Reste), zufällig verteilt."""
+    total = sum(shares.values())
+    raw = {k: n * v / total for k, v in shares.items()}
+    counts = {k: int(v) for k, v in raw.items()}
+    for k in sorted(raw, key=lambda k: raw[k] - counts[k], reverse=True)[: n - sum(counts.values())]:
+        counts[k] += 1
+    labels = [k for k, c in counts.items() for _ in range(c)]
+    r.shuffle(labels)
+    return labels
+
+
+def assign_triage(cards: list, args: argparse.Namespace, r: np.random.Generator) -> None:
+    p_green = 1 - args.p_red - args.p_yellow
+    if min(args.p_red, args.p_yellow, p_green) < 0:
+        raise SystemExit("--p-red + --p-yellow darf 1 nicht überschreiten")
+    for card, cat in zip(cards, allocate_exact(len(cards), {
+            "rot": args.p_red, "gelb": args.p_yellow, "gruen": p_green}, r)):
+        card.triage = cat
+    reds = [c for c in cards if c.triage == "rot"]
+    # Rest zufällig runden: Erwartungswert stimmt auch bei wenigen Roten
+    expected = len(reds) * args.p_red_pattern
+    n_pattern = int(expected) + int(r.random() < expected - int(expected))
+    for idx in r.choice(len(reds), size=n_pattern, replace=False) if reds else []:
+        reds[int(idx)].injury = str(r.choice(INJURY_PATTERNS))
 
 
 def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Generator) -> list[CardPerson]:
@@ -218,6 +301,7 @@ def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Gen
             authority=f"Kanton {canton}" if canton else str(p.city), td1=td1, mrz_error=err,
             checks=validate_td1(td1),
         ))
+    assign_triage(cards, args, r)
     return cards
 
 # -------------------------
@@ -430,15 +514,36 @@ def draw_card(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argp
     qy = oy + 2 * mm
     draw_qr(c, qx, qy, qs, p.qr_payload, args.qr_error)
 
+    # Prä-Triage-Feld links neben dem QR, gleiche Höhe wie die QR-Module
+    bw, bh = 19 * mm, qs - 2 * quiet
+    bx, by = qx + quiet - 2.5 * mm - bw, qy + quiet
+    draw_triage(c, bx, by, bw, bh, p.triage)
+
     tx, ty = x, back_y - 4.6 * mm
-    max_w = qx + quiet - tx - 3 * mm
+    max_w = bx - tx - 2 * mm
     text(c, tx, ty, f"Übungskarte {p.card_id}", "Sans-Bold", 8, ci.text)
     fit_text(c, tx, ty - 3.4 * mm, f"{p.first_name} {p.last_name}, geb. {p.dob:%d.%m.%Y}",
              max_w, "Sans", 6.5, color=ci.text)
     fit_text(c, tx, ty - 6.2 * mm, f"{p.street} {p.house_number}, {p.postcode} {p.city}".replace(" ,", ","),
              max_w, "Sans", 6.5, color=ci.text)
-    text(c, tx, ty - 9.6 * mm, "Fiktive Personendaten – kein amtliches Dokument", "Sans", 4.8, ci.grey)
-    text(c, tx, ty - 11.6 * mm, "Nur für Ausbildungszwecke IES NG", "Sans", 4.8, ci.grey)
+    if p.injury:
+        fit_text(c, tx, ty - 9.4 * mm, f"Verletzungsmuster: {p.injury}", max_w, "Sans-Bold", 6.2,
+                 color=TRIAGE["rot"][1])
+    fit_text(c, tx, ty - 12.2 * mm, "Fiktive Personendaten – kein amtliches Dokument – nur Ausbildung IES NG",
+             max_w, "Sans", 4.6, min_size=3.5, color=ci.grey)
+
+
+def draw_triage(c: Canvas, x: float, y: float, w: float, h: float, cat: str) -> None:
+    label, bg, fg = TRIAGE[cat]
+    c.setFillColor(bg)
+    c.setStrokeColor(HexColor("#1F1F1F"))
+    c.setLineWidth(0.4)
+    c.roundRect(x, y, w, h, 1.2 * mm, stroke=1, fill=1)
+    text(c, x + w / 2, y + h - 3.2 * mm, "PRÄ-TRIAGE", "Sans-Bold", 4.8, fg, "c")
+    size = 13.0
+    while size > 6 and pdfmetrics.stringWidth(label, "Sans-Bold", size) > w - 2 * mm:
+        size -= 0.5
+    text(c, x + w / 2, y + 2.6 * mm, label, "Sans-Bold", size, fg, "c")
 
 
 def cut_marks(c: Canvas, ox: float, oy: float, w: float, h: float) -> None:
@@ -478,7 +583,7 @@ def render_pdf(cards: list[CardPerson], out: Path, args: argparse.Namespace, ci:
 def write_key(cards: list[CardPerson], path: Path) -> None:
     cols = ["card_id", "qr_payload", "last_name", "first_name", "gender", "dob", "street", "house_number",
             "postcode", "city", "canton", "origin", "height_cm", "doc_number", "issue_date", "expiry",
-            "expired", "mrz_line1", "mrz_line2", "mrz_line3", "mrz_valid", "mrz_error"]
+            "expired", "triage", "injury_pattern", "mrz_line1", "mrz_line2", "mrz_line3", "mrz_valid", "mrz_error"]
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow(cols)
@@ -486,6 +591,7 @@ def write_key(cards: list[CardPerson], path: Path) -> None:
             w.writerow([p.card_id, p.qr_payload, p.last_name, p.first_name, p.gender, p.dob.isoformat(),
                         p.street, p.house_number, p.postcode, p.city, p.canton, p.origin, p.height_cm,
                         p.doc_number, p.issue_date.isoformat(), p.expiry.isoformat(), p.expired,
+                        TRIAGE[p.triage][0], p.injury,
                         *p.td1.lines, all(p.checks.values()), p.mrz_error])
 
 # -------------------------
@@ -516,6 +622,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--p-invalid-mrz", type=float, default=0.0, help="Anteil MRZ mit falscher Prüfziffer")
     g.add_argument("--p-expired", type=float, default=0.0, help="Anteil abgelaufener Ausweise")
     g.add_argument("--adults-only", action="store_true")
+
+    g = ap.add_argument_group("Prä-Triage")
+    g.add_argument("--p-red", type=float, default=0.15, help="Anteil Rot")
+    g.add_argument("--p-yellow", type=float, default=0.30, help="Anteil Gelb (Rest = Grün)")
+    g.add_argument("--p-red-pattern", type=float, default=0.40,
+                   help="Anteil Roter mit genau einem Verletzungsmuster")
 
     g = ap.add_argument_group("Daten (ohne Angabe: eingebaute Demo-Daten)")
     g.add_argument("--addresses")

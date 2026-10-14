@@ -4,3 +4,5 @@ reportlab
 segno
 # optional: Parquet-Ein-/Ausgabe
 pyarrow
+# OTF-Schriften (z. B. OCR-B .otf) automatisch nach TTF wandeln
+fontTools
