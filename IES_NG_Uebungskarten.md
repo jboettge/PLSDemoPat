@@ -103,6 +103,14 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 - Passbild-Ausschnitt: Kopf ca. 75 % der Bildhöhe, frontal, neutraler Ausdruck, heller Hintergrund
 - Vorschau aller Altersstufen: `python ies_ng_avatar.py -o avatar_vorschau.pdf`
 
+## Unterschriften
+- Individuell je Person (deterministisch): Handschrift-Schrift, Schreibweise (`Anna Müller`, `A. Müller`, `Müller`,
+  Kürzel, abgekürzt mit auslaufender Wellenlinie), Grösse, Neigung, schräge/wellige Grundlinie, Zittern, Tinte, Schnörkel
+- Kinder 7–13: voller Name in Druckschrift, gerade, ohne Schnörkel; unter 7 keine Unterschrift
+- Schriften: eigene TTF/OTF in `fonts/handschrift/` (Dateiname mit `print`/`druck` = Druckschrift), sonst die
+  Windows-Script-Schriften (Segoe Script/Print, Ink Free, Lucida Handwriting, Brush Script, Mistral …); ohne beide Ersatzschrift
+- Vorschau: `python ies_ng_signatur.py -o signatur_vorschau.pdf`
+
 ## Umsetzung der Erkenntnisse (`QR_MRZ_Erkenntnisse.md`)
 | Erkenntnis | Umsetzung |
 |---|---|

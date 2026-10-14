@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import zlib
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -31,6 +32,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
 from ies_ng_avatar import draw_avatar
+from ies_ng_signatur import draw_signature, register_hand_fonts
 from ies_ng_mrz import TD1, corrupt, make_td1, validate_td1
 from ies_ng_adressen import find_register, is_register, load_register
 from synthetic_people import GenConfig, generate_people, read_ch_addresses, read_ch_names
@@ -137,6 +139,7 @@ def register_fonts(overrides: dict[str, Optional[str]]) -> dict[str, str]:
                 break
         else:
             raise FileNotFoundError(f"font {name}: none of {paths} found")
+    register_hand_fonts()
     return used
 
 # -------------------------
@@ -427,8 +430,9 @@ def draw_id_front(c: Canvas, x: float, y: float, p: CardPerson, ci: CI) -> None:
     age = (date.today() - p.dob).days // 365
     text(c, fx, y + 6.5 * mm, "Unterschrift / Signature / Firma", "Sans", 3.4, ci.grey)
     if age >= 7:
-        fit_text(c, fx + 2 * mm, y + 2.4 * mm, f"{p.first_name.split('-')[0]} {p.last_name}",
-                 45 * mm, "Sign", 9, color=HexColor("#23315C"))
+        rng = np.random.default_rng([p.card_no, zlib.crc32(f"{p.doc_number}{p.last_name}".encode())])
+        draw_signature(c, fx + 2 * mm, y + 2.4 * mm, 45 * mm, p.first_name, p.last_name, rng, age,
+                       max_h=5 * mm)
 
     c.saveState()
     c.translate(x + ID_W * mm - 1.6 * mm, y + 12 * mm)
