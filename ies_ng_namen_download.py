@@ -109,6 +109,19 @@ class Candidate:
     fmt: str
     url: str
     modified: str
+    gender: Optional[str] = None   # BFS veröffentlicht Vornamen je Geschlecht separat
+    year: Optional[str] = None     # Stichjahr aus dem Titel, z. B. '2025'
+
+
+_GENDER_RE = {
+    "f": re.compile(r"\b(weiblich\w*|féminin\w*|feminin\w*|femminil\w*|female|frauen)\b", re.I),
+    "m": re.compile(r"\b(männlich\w*|maennlich\w*|masculin\w*|maschil\w*|male|männer)\b", re.I),
+}
+
+
+def _gender_of(text: str) -> Optional[str]:
+    hits = [g for g, rx in _GENDER_RE.items() if rx.search(text)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def ckan_candidates(spec: Spec, ckan: str = CKAN) -> list[Candidate]:
@@ -138,9 +151,11 @@ def ckan_candidates(spec: Spec, ckan: str = CKAN) -> list[Candidate]:
                     continue
                 score = (2.0 * sum(p in low for p in spec.prefer) - 5.0 * sum(a in low for a in spec.avoid)
                          - 0.5 * FORMAT_RANK[fmt])
+                yr = re.search(r"\b(20\d\d)\b", ptitle)
                 out.append(Candidate(score, ptitle.strip()[:90], _text(rsc.get("title")).strip()[:60], fmt, rurl,
                                      rsc.get("last_modified") or rsc.get("modified") or pkg.get("metadata_modified")
-                                     or ""))
+                                     or "", _gender_of(f"{ptitle} {_text(rsc.get('title'))}"),
+                                     yr.group(1) if yr else None))
     out.sort(key=lambda c: c.modified, reverse=True)  # neueste zuerst ...
     return sorted(out, key=lambda c: -c.score)          # ... dann stabil nach Punktzahl
 
@@ -173,6 +188,32 @@ def _ext_from(url: str, fmt: str) -> str:
 def _clear_old(kind: str, data_dir: Path) -> None:
     for old in data_dir.glob(f"{kind}_bfs.*"):
         old.unlink()
+
+
+def pick_by_gender(cands: list[Candidate]) -> list[Candidate]:
+    """Bester Kandidat je Geschlecht, möglichst gleiches Stichjahr; sonst nur der beste insgesamt."""
+    by_g = {g: [c for c in cands if c.gender == g] for g in ("m", "f")}
+    if not (by_g["m"] and by_g["f"]):
+        return cands[:1]
+    for c in sorted(by_g["m"] + by_g["f"], key=lambda c: (-c.score, -int(c.year or 0))):
+        other = "f" if c.gender == "m" else "m"
+        match = next((o for o in by_g[other] if o.year == c.year), None)
+        if match:
+            return [c, match] if c.gender == "m" else [match, c]
+    return [by_g["m"][0], by_g["f"][0]]
+
+
+def merge_gendered(parts: list[tuple[str, Path]], dest: Path) -> Path:
+    """Vornamen-Dateien je Geschlecht zu einer Datei mit Spalte 'gender' zusammenführen."""
+    import pandas as pd
+    frames = []
+    for g, p in parts:
+        df = pd.read_csv(p, sep=None, engine="python", dtype=str, encoding="utf-8-sig")
+        df["gender"] = g
+        frames.append(df)
+        p.unlink()
+    pd.concat(frames, ignore_index=True).to_csv(dest, index=False, encoding="utf-8")
+    return dest
 
 
 def validate(kind: str, path: Path) -> bool:
@@ -220,15 +261,30 @@ def fetch(kind: str, args: argparse.Namespace) -> Optional[Path]:
                       "  -> Tabellen-ID aus STAT-TAB (--px-" + kind + ") oder direkte URL (--url-" + kind + ").")
                 return None
             for c in cands[: args.show]:
-                print(f"  [{c.score:+.1f}] {c.fmt:<4} {c.dataset} | {c.resource}\n         {c.url}")
+                print(f"  [{c.score:+.1f}] {c.fmt:<4} {c.gender or '-'} {c.dataset} | {c.resource}\n"
+                      f"         {c.url}")
             if args.list:
                 return None
-            best = cands[0]
-            print(f"  -> lade: {best.dataset} ({best.fmt})")
-            _clear_old(kind, data_dir)
-            dest = _download(best.url, data_dir / f"{kind}_bfs{_ext_from(best.url, best.fmt)}")
-            source.update(method="ckan", dataset=best.dataset, resource=best.resource, url=best.url,
-                          modified=best.modified)
+            picks = pick_by_gender(cands) if kind == "vornamen" else cands[:1]
+            if len(picks) == 2 and all(c.fmt == "CSV" for c in picks):
+                _clear_old(kind, data_dir)
+                parts = []
+                for c in picks:
+                    print(f"  -> lade ({c.gender}): {c.dataset} ({c.fmt})")
+                    parts.append((c.gender, _download(c.url, data_dir / f"{kind}_bfs_{c.gender}.part.csv")))
+                dest = merge_gendered(parts, data_dir / f"{kind}_bfs.csv")
+                source.update(method="ckan", resources=[
+                    {"gender": c.gender, "dataset": c.dataset, "resource": c.resource, "url": c.url,
+                     "modified": c.modified} for c in picks])
+            else:
+                best = picks[0]
+                print(f"  -> lade: {best.dataset} ({best.fmt})")
+                if kind == "vornamen" and best.gender:
+                    print("  Warnung: nur ein Geschlecht gefunden.")
+                _clear_old(kind, data_dir)
+                dest = _download(best.url, data_dir / f"{kind}_bfs{_ext_from(best.url, best.fmt)}")
+                source.update(method="ckan", dataset=best.dataset, resource=best.resource, url=best.url,
+                              modified=best.modified)
     except Exception as e:  # noqa: BLE001
         print(f"  Download fehlgeschlagen: {e}")
         return None

@@ -44,6 +44,34 @@ def _darker(hex_: str, f: float = 0.75) -> Color:
     return Color(c.red * f, c.green * f, c.blue * f)
 
 
+class _GrayCanvas:
+    """Canvas-Hülle: alle Farben als Graustufen (Passfoto ID 2023 ist schwarz-weiss)."""
+
+    def __init__(self, c: Canvas, contrast: float = 1.15):
+        self._c, self._k = c, contrast
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def _g(self, col) -> Color:
+        col = HexColor(col) if isinstance(col, str) else col
+        lum = 0.299 * col.red + 0.587 * col.green + 0.114 * col.blue
+        lum = min(1.0, max(0.0, 0.5 + (lum - 0.5) * self._k))
+        return Color(lum, lum, lum, alpha=getattr(col, "alpha", 1))
+
+    def setFillColor(self, col, alpha=None):
+        self._c.setFillColor(self._g(col), alpha)
+
+    def setStrokeColor(self, col, alpha=None):
+        self._c.setStrokeColor(self._g(col), alpha)
+
+    def setFillColorRGB(self, r, g, b, alpha=None):
+        self.setFillColor(Color(r, g, b), alpha)
+
+    def setStrokeColorRGB(self, r, g, b, alpha=None):
+        self.setStrokeColor(Color(r, g, b), alpha)
+
+
 @dataclass
 class Look:
     age: int
@@ -141,9 +169,11 @@ class _Pen:
 
 
 def draw_avatar(c: Canvas, x: float, y: float, w: float, h: float, age: int, gender: str,
-                r: np.random.Generator, look: Optional[Look] = None) -> Look:
+                r: np.random.Generator, look: Optional[Look] = None, gray: bool = False) -> Look:
     """Zeichnet ein Porträt in die Box (x, y, w, h) in Punkten. Gibt die verwendeten Merkmale zurück."""
     lk = look or make_look(age, gender, r)
+    if gray:
+        c = _GrayCanvas(c)
     c.saveState()
     clip = c.beginPath()
     clip.rect(x, y, w, h)

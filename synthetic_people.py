@@ -57,18 +57,18 @@ ADDR_ALIASES = {
     "canton": ["kt", "kanton", "state", "gdekt", "com_canton"],
 }
 FREQ_ALIASES = ["häufigkeit", "anzahl", "count", "frequency", "value", "wert", "obs_value", "anzahl personen"]
-YEAR_ALIASES = ["geburtsjahr", "jahrgang", "birth year", "birth_year", "année de naissance", "anno di nascita",
+YEAR_ALIASES = ["yearofbirth", "geburtsjahr", "jahrgang", "birth year", "birth_year", "année de naissance", "anno di nascita",
                 "jahr", "year", "année"]
-CANTON_ALIASES = ["kanton", "canton", "cantone", "kt"]
+CANTON_ALIASES = ["kanton", "canton", "cantone", "kt", "gdekt"]
 FN_ALIASES = {
-    "first": ["vorname", "vornamen", "prenom", "prénom", "nome", "given", "first name"],
+    "first": ["firstname", "vorname", "vornamen", "prenom", "prénom", "nome", "given", "first name"],
     "gender": ["geschlecht", "sex", "sexe", "sesso"],
     "first_freq": FREQ_ALIASES,
     "year": YEAR_ALIASES,
     "canton": CANTON_ALIASES,
 }
 LN_ALIASES = {
-    "last": ["nachname", "nachnamen", "nom", "nom de famille", "cognome", "name", "surname", "last name"],
+    "last": ["lastname", "nachname", "nachnamen", "nom", "nom de famille", "cognome", "name", "surname", "last name"],
     "last_freq": FREQ_ALIASES,
     "canton": CANTON_ALIASES,
 }
