@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import sys
 import zlib
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -1159,6 +1161,62 @@ def write_key(cards: list[CardPerson], path: Path) -> None:
 # CLI
 # -------------------------
 
+def describe_params(ap: argparse.ArgumentParser) -> list[dict]:
+    """Parameter als JSON-taugliche Liste (für UIs wie DroidSim)."""
+    out = []
+    for grp in ap._action_groups:
+        for a in grp._group_actions:
+            if a.dest in ("help",) or a.help == argparse.SUPPRESS:
+                continue
+            if isinstance(a, argparse._StoreTrueAction):
+                typ = "bool"
+            elif isinstance(a, argparse._StoreFalseAction):
+                typ = "bool_neg"
+            elif a.nargs in ("+", "*"):
+                typ = "list"
+            else:
+                typ = {int: "int", float: "float"}.get(a.type, "str")
+            out.append({"name": a.option_strings[-1], "dest": a.dest, "group": grp.title, "type": typ,
+                        "default": a.default, "choices": list(a.choices) if a.choices else None,
+                        "help": a.help, "flag_without_value_const": a.const if a.nargs == "?" else None})
+    return out
+
+
+def write_manifest(cards: list[CardPerson], path: Path, png_dir: Optional[Path], pdf: Path, key: Path,
+                   args: argparse.Namespace) -> None:
+    """Maschinenlesbare Übersicht je Patient inkl. Bildpfaden (relativ zum Manifest)."""
+    def rel(f: Path) -> str:
+        try:
+            return str(f.resolve().relative_to(path.parent.resolve())).replace("\\", "/")
+        except ValueError:
+            return str(f.resolve())
+
+    params = {k: v for k, v in vars(args).items() if not k.startswith("_")}
+    items = []
+    for p in cards:
+        fa = p.fall
+        imgs = {}
+        if png_dir:
+            for part in ("card", "card_back", "front", "back", "mrz", "qr"):
+                f = png_dir / f"{p.card_id}_{part}.png"
+                if f.is_file():
+                    imgs[part] = rel(f)
+        items.append({
+            "card_id": p.card_id, "qr_payload": p.qr_payload,
+            "pre_triage": fa.pre, "triage": fa.triage, "swiss_pre_kriterium": fa.kriterium,
+            "fall": fa.key, "verletzung": fa.titel, "beschreibung": fa.text, "befund": fa.befund_dict(),
+            "person": {"first_name": p.first_name, "last_name": p.last_name, "gender": p.gender,
+                       "dob": p.dob.isoformat(), "street": p.street, "house_number": p.house_number,
+                       "postcode": p.postcode, "city": p.city, "canton": p.canton},
+            "ausweis": {"doc_number": p.doc_number, "expiry": p.expiry.isoformat(), "mrz": list(p.td1.lines),
+                        "mrz_valid": all(p.checks.values())},
+            "images": imgs,
+        })
+    data = {"schema": "ies-ng-karten/1", "generated": datetime.now().isoformat(timespec="seconds"),
+            "pdf": rel(pdf), "loesungen": rel(key), "params": params, "count": len(items), "cards": items}
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="IES NG Übungskarten (A6) erzeugen", fromfile_prefix_chars="@")
     g = ap.add_argument_group("Karten")
@@ -1177,6 +1235,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--png-dpi", type=int, default=300, help="Auflösung ganze Karte")
     g.add_argument("--png-crop-zoom", type=float, default=2.0, help="Faktor auf --png-dpi für front/back/mrz")
     g.add_argument("--png-margin", type=float, default=6.0, help="weisser Rand um front/back/mrz, mm")
+    g.add_argument("--manifest", nargs="?", const="auto", metavar="DATEI",
+                   help="JSON je Patient mit Bildpfaden (Default bei --png: <png-ordner>/manifest.json)")
+    g.add_argument("--describe-params", action="store_true",
+                   help="alle Parameter als JSON ausgeben und beenden (für UIs, z. B. DroidSim)")
     g.add_argument("--no-cut-marks", dest="cut_marks", action="store_false")
     g.add_argument("-o", "--out", default="ies_ng_karten.pdf")
     g.add_argument("--key", default=None, help="Lösungsliste CSV (Default: <out>_loesungen.csv)")
@@ -1218,7 +1280,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--font-bold", help="z. B. Frutiger Bold TTF")
     g.add_argument("--font-mrz", help="OCR-B TTF (empfohlen)")
     g.add_argument("--font-mono", help="Monospace-TTF für die Personalisierung (ID 2023)")
-    return ap.parse_args(argv)
+    args = ap.parse_args(argv)
+    if args.describe_params:
+        json.dump(describe_params(ap), sys.stdout, ensure_ascii=False, indent=2, default=str)
+        print()
+        raise SystemExit(0)
+    return args
 
 
 def main(argv: Optional[list[str]] = None) -> None:
@@ -1268,6 +1335,14 @@ def main(argv: Optional[list[str]] = None) -> None:
         png_dir = Path(args.png) if Path(args.png).is_absolute() else out.parent / args.png
         n = export_png(cards, png_dir, args, CI())
         print(f"{n} PNG -> {png_dir}")
+    else:
+        png_dir = None
+    if args.manifest or args.png:
+        man = Path(args.manifest) if args.manifest and args.manifest != "auto" else \
+            (png_dir / "manifest.json" if png_dir else out.with_name(out.stem + "_manifest.json"))
+        man.parent.mkdir(parents=True, exist_ok=True)
+        write_manifest(cards, man, png_dir, out, key, args)
+        print(f"Manifest -> {man}")
     print(f"{len(cards)} Karten {cards[0].card_id}–{cards[-1].card_id} -> {out} ({args.layout}), Lösungen -> {key}")
 
 

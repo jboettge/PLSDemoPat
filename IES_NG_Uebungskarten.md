@@ -59,6 +59,16 @@ Im Emulator hinterlegen (Android Studio, Bezeichnungen je nach Version leicht ab
 - Für QR am besten `_qr.png`, für MRZ `_mrz.png` oder `_back.png` hinterlegen
 - Alternative: Webcam als Emulator-Kamera (`webcam0`) und PNG am Bildschirm/Tablet davor zeigen
 
+## Schnittstelle für externe Tools (z. B. DroidSim)
+```bash
+python ies_ng_karten.py --describe-params            # alle Parameter als JSON (name, type, default, choices, help, group)
+python ies_ng_karten.py -n 20 --png out/png --png-parts card qr mrz   # schreibt zusätzlich out/png/manifest.json
+```
+`manifest.json` (Schema `ies-ng-karten/1`): `params` (verwendete Parameter), `pdf`, `loesungen`, `cards[]` mit
+`card_id`, `qr_payload`, `pre_triage`, `triage`, `swiss_pre_kriterium`, `fall`, `verletzung`, `beschreibung`,
+`befund{}`, `person{}`, `ausweis{doc_number, expiry, mrz[3], mrz_valid}` und `images{card, card_back, front, back,
+mrz, qr}` (Pfade relativ zum Manifest). Eigener Pfad: `--manifest DATEI`.
+
 ## Originalgrösse
 - ID im PDF exakt 85.6 × 54 mm (ISO/IEC 7810 ID-1), gemessen in A6- und A4-Layout
 - PDF-Vorgabe «PrintScaling = None»: Druckdialog startet mit tatsächlicher Grösse
