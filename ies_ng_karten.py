@@ -67,7 +67,10 @@ HERE = Path(__file__).resolve().parent
 ID_W, ID_H, ID_R = 85.6, 54.0, 3.18      # ID-1 (ISO/IEC 7810), mm
 MRZ_PITCH, MRZ_LINE = 2.54, 4.23          # 10 Zeichen/Zoll, 6 Zeilen/Zoll
 MRZ_CAP_MM = 2.4                          # Zeichenhöhe OCR-B Grösse 1
-MRZ_ZONE_MM = 16.5                        # Höhe des MRZ-Bereichs (PNG-Export «mrz»)
+MRZ_ZONE_MM = 16.5                        # Höhe des MRZ-Bereichs auf der ID-Rückseite
+MRZ_W_MM, MRZ_BASE_MM = 30 * 2.54, 3.0    # Breite Zeichenblock, Grundlinie unterste Zeile über ID-Unterkante
+MRZ_H_MM = 2 * 4.23 + 2.4                 # Grundlinie unten bis Oberkante oberste Zeile
+MRZ_MARGIN_MM = 3.0                       # weisser Rand beim PNG «mrz»
 
 FONT_CANDIDATES = {
     "Sans": ["fonts/Frutiger-Roman.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -1093,7 +1096,7 @@ def export_png(cards: list[CardPerson], out_dir: Path, args: argparse.Namespace,
     pad = args.png_margin * mm
     sizes = {"card": A6, "front": (ID_W * mm + 2 * pad, ID_H * mm + 2 * pad),
              "back": (ID_W * mm + 2 * pad, ID_H * mm + 2 * pad),
-             "mrz": (ID_W * mm + 2 * pad, MRZ_ZONE_MM * mm + 2 * pad)}
+             "mrz": ((MRZ_W_MM + 2 * MRZ_MARGIN_MM) * mm, (MRZ_H_MM + 2 * MRZ_MARGIN_MM) * mm)}
     pdf_parts = [pt for pt in args.png_parts if pt in sizes]
 
     buf = io.BytesIO()
@@ -1116,7 +1119,8 @@ def export_png(cards: list[CardPerson], out_dir: Path, args: argparse.Namespace,
             elif part == "back":
                 draw_id_back(c, pad, pad, p, ci)
             else:
-                draw_mrz(c, pad, pad - 0.8 * mm, p.td1)
+                # eng freigestellt: Zeichenblock + MRZ_MARGIN_MM weisser Rand
+                draw_mrz(c, (MRZ_MARGIN_MM - (ID_W - MRZ_W_MM) / 2) * mm, (MRZ_MARGIN_MM - MRZ_BASE_MM) * mm, p.td1)
             c.showPage()
             order.append((p.card_id, part))
     c.save()
@@ -1126,13 +1130,20 @@ def export_png(cards: list[CardPerson], out_dir: Path, args: argparse.Namespace,
     if order:
         doc = pymupdf.open(stream=buf.getvalue(), filetype="pdf")
         for page, (cid, part) in zip(doc, order):
-            dpi = args.png_dpi if part.startswith("card") else args.png_dpi * args.png_crop_zoom
-            page.get_pixmap(dpi=int(dpi), alpha=False).save(out_dir / f"{cid}_{part}.png")
+            if part.startswith("card"):
+                zoom = args.png_dpi / 72
+            elif part == "mrz":   # lange Kante = --png-long-edge
+                zoom = args.png_long_edge / max(page.rect.width, page.rect.height)
+            else:
+                zoom = args.png_dpi * args.png_crop_zoom / 72
+            page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).save(out_dir / f"{cid}_{part}.png")
             n += 1
     if "qr" in args.png_parts:
         for p in cards:
             qr = segno.make_qr(p.qr_payload, version=2, mode="byte", error=args.qr_error, boost_error=False)
-            qr.save(out_dir / f"{p.card_id}_qr.png", scale=24, border=6)
+            border = 4                                          # Ruhezone 4 Module (ISO/IEC 18004)
+            scale = max(1, round(args.png_long_edge / (len(qr.matrix) + 2 * border)))
+            qr.save(out_dir / f"{p.card_id}_qr.png", scale=scale, border=border)
             n += 1
     return n
 
@@ -1182,6 +1193,13 @@ def describe_params(ap: argparse.ArgumentParser) -> list[dict]:
     return out
 
 
+def _png_size(f: Path) -> tuple[int, int]:
+    """Breite/Höhe aus dem PNG-Header (ohne zusätzliche Abhängigkeit)."""
+    with f.open("rb") as fh:
+        head = fh.read(24)
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
 def write_manifest(cards: list[CardPerson], path: Path, png_dir: Optional[Path], pdf: Path, key: Path,
                    args: argparse.Namespace) -> None:
     """Maschinenlesbare Übersicht je Patient inkl. Bildpfaden (relativ zum Manifest)."""
@@ -1195,14 +1213,16 @@ def write_manifest(cards: list[CardPerson], path: Path, png_dir: Optional[Path],
     items = []
     for p in cards:
         fa = p.fall
-        imgs = {}
+        imgs, info = {}, {}
         if png_dir:
             for part in ("card", "card_back", "front", "back", "mrz", "qr"):
                 f = png_dir / f"{p.card_id}_{part}.png"
                 if f.is_file():
                     imgs[part] = rel(f)
+                    info[part] = dict(zip(("width", "height"), _png_size(f)))
         items.append({
-            "card_id": p.card_id, "qr_payload": p.qr_payload,
+            "card_id": p.card_id, "label": f"{p.card_id} – {p.last_name} {p.first_name} – {fa.titel}",
+            "qr_payload": p.qr_payload,
             "pre_triage": fa.pre, "triage": fa.triage, "swiss_pre_kriterium": fa.kriterium,
             "fall": fa.key, "verletzung": fa.titel, "beschreibung": fa.text, "befund": fa.befund_dict(),
             "person": {"first_name": p.first_name, "last_name": p.last_name, "gender": p.gender,
@@ -1210,9 +1230,10 @@ def write_manifest(cards: list[CardPerson], path: Path, png_dir: Optional[Path],
                        "postcode": p.postcode, "city": p.city, "canton": p.canton},
             "ausweis": {"doc_number": p.doc_number, "expiry": p.expiry.isoformat(), "mrz": list(p.td1.lines),
                         "mrz_valid": all(p.checks.values())},
-            "images": imgs,
+            "images": imgs, "image_info": info,
         })
-    data = {"schema": "ies-ng-karten/1", "generated": datetime.now().isoformat(timespec="seconds"),
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    data = {"schema": "ies-ng-karten/1", "generated": now, "generated_at": now,
             "pdf": rel(pdf), "loesungen": rel(key), "params": params, "count": len(items), "cards": items}
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
@@ -1233,7 +1254,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--png-parts", nargs="+", choices=PNG_PARTS, default=["card", "qr", "mrz"],
                    help="card = ganze Karte, front/back = ID-Seite, mrz = nur MRZ, qr = nur QR-Code")
     g.add_argument("--png-dpi", type=int, default=300, help="Auflösung ganze Karte")
-    g.add_argument("--png-crop-zoom", type=float, default=2.0, help="Faktor auf --png-dpi für front/back/mrz")
+    g.add_argument("--png-crop-zoom", type=float, default=2.0, help="Faktor auf --png-dpi für front/back")
+    g.add_argument("--png-long-edge", type=int, default=1400, help="lange Kante in px für qr und mrz")
     g.add_argument("--png-margin", type=float, default=6.0, help="weisser Rand um front/back/mrz, mm")
     g.add_argument("--manifest", nargs="?", const="auto", metavar="DATEI",
                    help="JSON je Patient mit Bildpfaden (Default bei --png: <png-ordner>/manifest.json)")

@@ -45,8 +45,8 @@ python ies_ng_karten.py -n 50 --png emulator --png-parts qr mrz back
 |---|---|---|
 | `card` | Vorderseite (`_card.png`) und Rückseite (`_card_back.png`), 300 dpi | Gesamtansicht, QR-Scan |
 | `front`, `back` | ID-Seite freigestellt, weisser Rand | Ausweis scannen |
-| `mrz` | nur MRZ, weisser Rand | MRZ-Erkennung |
-| `qr` | nur QR (`segno`, Ruhezone 6 Module) | QR-Scan |
+| `mrz` | nur MRZ, eng freigestellt, 3 mm weisser Rand, ca. 1400 px | MRZ-Erkennung |
+| `qr` | nur QR (`segno`, Ruhezone 4 Module, ca. 1400 px) | QR-Scan |
 
 Teile werden **freigestellt** auf weissem Grund gerendert (keine Nachbarelemente, die den Scanner stören).
 Optionen: `--png-dpi` (300), `--png-crop-zoom` (2 → 600 dpi für front/back/mrz), `--png-margin` (6 mm).
@@ -66,8 +66,13 @@ python ies_ng_karten.py -n 20 --png out/png --png-parts card qr mrz   # schreibt
 ```
 `manifest.json` (Schema `ies-ng-karten/1`): `params` (verwendete Parameter), `pdf`, `loesungen`, `cards[]` mit
 `card_id`, `qr_payload`, `pre_triage`, `triage`, `swiss_pre_kriterium`, `fall`, `verletzung`, `beschreibung`,
-`befund{}`, `person{}`, `ausweis{doc_number, expiry, mrz[3], mrz_valid}` und `images{card, card_back, front, back,
-mrz, qr}` (Pfade relativ zum Manifest). Eigener Pfad: `--manifest DATEI`.
+`befund{}`, `person{}`, `ausweis{doc_number, expiry, mrz[3], mrz_valid}`, `label` (Kurztext für Listen),
+`images{card, card_back, front, back, mrz, qr}` (Pfade relativ zum Manifest) und `image_info{teil: {width, height}}`;
+dazu `generated_at` (ISO 8601 mit Zeitzone). Eigener Pfad: `--manifest DATEI`. Das Schema bleibt stabil
+(nur Ergänzungen, keine Umbenennungen).
+
+Bildgrössen: `card`/`card_back` 300 dpi (1241 × 1749 px), `front`/`back` 600 dpi, `qr` und `mrz` eng freigestellt
+mit weissem Rand, lange Kante `--png-long-edge` (Default 1400 px; QR mit 4 Modulen Ruhezone). Keine Transparenz.
 
 ## Originalgrösse
 - ID im PDF exakt 85.6 × 54 mm (ISO/IEC 7810 ID-1), gemessen in A6- und A4-Layout
