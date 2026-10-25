@@ -33,6 +33,10 @@ from reportlab.pdfgen.canvas import Canvas
 
 from ies_ng_avatar import draw_avatar
 from ies_ng_signatur import draw_signature, register_hand_fonts
+from ies_ng_swisspre import (KATEGORIEN, Fall, allocate_pre, befund_zeilen, erzeuge_fall, parse_mix,
+                             pls_capacity, pls_id)
+from ies_ng_szene import draw_scene
+from ies_ng_avatar import make_look
 from ies_ng_mrz import TD1, corrupt, make_td1, validate_td1
 from ies_ng_adressen import find_register, is_register, load_register
 from synthetic_people import GenConfig, generate_people, read_ch_addresses, read_ch_names
@@ -56,18 +60,6 @@ class CI:
         "Confederaziun svizra",
     )
 
-
-TRIAGE = {  # Kategorie: (Beschriftung, Hintergrund, Schrift)
-    "rot": ("ROT", HexColor("#E30613"), white),
-    "gelb": ("GELB", HexColor("#FFD500"), HexColor("#1F1F1F")),
-    "gruen": ("GRÜN", HexColor("#009A44"), white),
-}
-INJURY_PATTERNS = (
-    "Behebbare Atemwegsverlegung",
-    "Arterielle Blutung",
-    "Verbrennung Grad 2–3 > 60 % KOF",
-    "Schnappatmung",
-)
 
 HERE = Path(__file__).resolve().parent
 ID_W, ID_H, ID_R = 85.6, 54.0, 3.18      # ID-1 (ISO/IEC 7810), mm
@@ -218,9 +210,8 @@ class CardPerson:
     authority: str
     td1: TD1
     mrz_error: str = ""
-    triage: str = "gruen"
     photo_seed: Optional[tuple[int, int]] = None
-    injury: str = ""
+    fall: Optional[Fall] = None
     checks: dict = field(default_factory=dict)
 
     @property
@@ -242,31 +233,11 @@ def _doc_number(r: np.random.Generator, prefix: str) -> str:
     return f"{prefix}{D()}{L()}{D()}{D()}{L()}{D()}{D()}"
 
 
-def allocate_exact(n: int, shares: dict[str, float], r: np.random.Generator) -> list[str]:
-    """Exakte Anteile (Methode der grössten Reste), zufällig verteilt."""
-    total = sum(shares.values())
-    raw = {k: n * v / total for k, v in shares.items()}
-    counts = {k: int(v) for k, v in raw.items()}
-    for k in sorted(raw, key=lambda k: raw[k] - counts[k], reverse=True)[: n - sum(counts.values())]:
-        counts[k] += 1
-    labels = [k for k, c in counts.items() for _ in range(c)]
-    r.shuffle(labels)
-    return labels
-
-
-def assign_triage(cards: list, args: argparse.Namespace, r: np.random.Generator) -> None:
-    p_green = 1 - args.p_red - args.p_yellow
-    if min(args.p_red, args.p_yellow, p_green) < 0:
-        raise SystemExit("--p-red + --p-yellow darf 1 nicht überschreiten")
-    for card, cat in zip(cards, allocate_exact(len(cards), {
-            "rot": args.p_red, "gelb": args.p_yellow, "gruen": p_green}, r)):
-        card.triage = cat
-    reds = [c for c in cards if c.triage == "rot"]
-    # Rest zufällig runden: Erwartungswert stimmt auch bei wenigen Roten
-    expected = len(reds) * args.p_red_pattern
-    n_pattern = int(expected) + int(r.random() < expected - int(expected))
-    for idx in r.choice(len(reds), size=n_pattern, replace=False) if reds else []:
-        reds[int(idx)].injury = str(r.choice(INJURY_PATTERNS))
+def assign_faelle(cards: list, args: argparse.Namespace, r: np.random.Generator) -> None:
+    """Prä-Triage exakt nach --pre-mix (Swiss Pre), je Karte ein Fall mit Befunden und ärztlicher Triage."""
+    ages = [_age(c.dob) for c in cards]
+    for card, age, pre in zip(cards, ages, allocate_pre(ages, parse_mix(args.pre_mix), r)):
+        card.fall = erzeuge_fall(pre, age, r)
 
 
 def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Generator) -> list[CardPerson]:
@@ -277,7 +248,7 @@ def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Gen
     cards = []
     for i, p in enumerate(people.itertuples(index=False)):
         n = args.start + i
-        cid = f"{args.prefix}{n:0{args.digits}d}"
+        cid = pls_id(n, args.id_start)
         dob = p.dob if isinstance(p.dob, date) else pd.Timestamp(p.dob).date()
         age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
@@ -322,7 +293,7 @@ def build_cards(people: pd.DataFrame, args: argparse.Namespace, r: np.random.Gen
             checks=validate_td1(td1),
             photo_seed=None if args.no_photos else (args.seed, n),
         ))
-    assign_triage(cards, args, r)
+    assign_faelle(cards, args, r)
     return cards
 
 # -------------------------
@@ -917,13 +888,98 @@ def draw_qr(c: Canvas, x: float, y: float, size: float, payload: str, error: str
                 ci_ += 1
 
 
-def draw_card(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argparse.Namespace) -> None:
-    """Eine A6-Karte (105 x 148 mm) mit Ursprung unten links."""
+def wrap(s: str, font: str, size: float, max_w: float) -> list[str]:
+    lines, cur = [], ""
+    for w in s.split():
+        t = f"{cur} {w}".strip()
+        if pdfmetrics.stringWidth(t, font, size) <= max_w or not cur:
+            cur = t
+        else:
+            lines.append(cur)
+            cur = w
+    return lines + ([cur] if cur else [])
+
+
+def draw_kat(c: Canvas, x: float, y: float, w: float, h: float, titel: str, kat: str) -> None:
+    """Farbfeld einer PLS-Farbkategorie."""
+    label, roman, bg, fg = KATEGORIEN[kat]
+    bg, fg = HexColor(bg), HexColor(fg)
+    c.setFillColor(bg)
+    c.setStrokeColor(HexColor("#1F1F1F"))
+    c.setLineWidth(0.5)
+    c.roundRect(x, y, w, h, 1.2 * mm, stroke=1, fill=1)
+    text(c, x + 1.6 * mm, y + h - 3.0 * mm, titel, "Sans-Bold", 4.8, fg)
+    text(c, x + w - 1.6 * mm, y + h - 3.0 * mm, roman, "Sans-Bold", 5.5, fg, "r")
+    size = 13.0
+    while size > 6 and pdfmetrics.stringWidth(label, "Sans-Bold", size) > w - 3 * mm:
+        size -= 0.5
+    text(c, x + w / 2, y + 2.4 * mm, label, "Sans-Bold", size, fg, "c")
+
+
+def draw_card(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argparse.Namespace,
+              side: str = "front") -> None:
+    """A6-Karte (105 x 148 mm), Ursprung unten links. front = Patientenkarte, back = Ausweis."""
+    (draw_card_front if side == "front" else draw_card_back)(c, ox, oy, p, ci, args)
+
+
+def draw_card_front(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argparse.Namespace) -> None:
+    """Vorderseite: PLS-ID mit QR, Prä-Triage (Swiss Pre), Triage, Auffindesituation, Verletzung, Befunde."""
+    W, H = A6
+    f = p.fall
+    w = ID_W * mm
+    x = ox + (W - w) / 2
+    y = draw_header(c, x, oy + H - 4 * mm, w, ci, args.logo)
+
+    # QR oben rechts (Modulkante bündig mit Inhaltsrand)
+    qs = args.qr_size * mm
+    quiet = qs * 4 / 33
+    qx, qy = x + w + quiet - qs, y - 2.5 * mm - qs + quiet
+    draw_qr(c, qx, qy, qs, p.qr_payload, args.qr_error)
+
+    lw = qx + quiet - x - 3 * mm               # Breite links vom QR
+    by = qy + quiet                            # Farbfelder unten bündig mit den QR-Modulen
+    bw, bh = (lw - 2 * mm) / 2, min(12 * mm, y - 13.5 * mm - by)
+    text(c, x, y - 7.6 * mm, p.card_id, "Sans-Bold", 19, ci.text)
+    text(c, x, y - 11.0 * mm, "Patientenkarte – Übung IES NG", "Sans", 6.2, ci.grey)
+    draw_kat(c, x, by, bw, bh, "PRÄ-TRIAGE", f.pre)
+    draw_kat(c, x + bw + 2 * mm, by, bw, bh, "TRIAGE", f.triage)
+
+    # Auffindesituation (Szene mit Figur im Aussehen des Passfotos)
+    sh = 60 * mm
+    sy = by - 3 * mm - sh
+    look = make_look(_age(p.dob), p.gender, np.random.default_rng(p.photo_seed or (args.seed, p.card_no)))
+    draw_scene(c, x, sy, w, sh, look, f.pose, f.mimik, f.marks, f.env)
+    c.setStrokeColor(ci.line)
+    c.setLineWidth(0.4)
+    c.rect(x, sy, w, sh, stroke=1, fill=0)
+    c.setFillColor(white)
+    c.setFillAlpha(0.85)
+    c.roundRect(x + 1.2 * mm, sy + sh - 5.2 * mm, 26 * mm, 4 * mm, 1 * mm, stroke=0, fill=1)
+    c.setFillAlpha(1)
+    text(c, x + 2.4 * mm, sy + sh - 4.1 * mm, "AUFFINDESITUATION", "Sans-Bold", 5.6, ci.text)
+
+    # Verletzung + Beschreibung
+    ty = sy - 4.4 * mm
+    fit_text(c, x, ty, f.titel, w, "Sans-Bold", 8.5, color=ci.text)
+    for i, ln in enumerate(wrap(f.text, "Sans", 6.3, w)[:3]):
+        text(c, x, ty - (3.6 + i * 2.8) * mm, ln, "Sans", 6.3, ci.text)
+
+    # Befunde (Grundlage für Swiss Pre)
+    fy = ty - 13.4 * mm
+    c.setStrokeColor(ci.line)
+    c.line(x, fy + 2.6 * mm, x + w, fy + 2.6 * mm)
+    text(c, x, fy, "BEFUNDE", "Sans-Bold", 5.4, ci.grey)
+    for i, ln in enumerate(befund_zeilen(f.befund)):
+        fit_text(c, x, fy - (2.8 + i * 2.6) * mm, ln, w, "Sans", 6.0, min_size=4.2, color=ci.text)
+    fit_text(c, x, oy + 3.2 * mm, "Fiktiver Übungsfall – kein amtliches Dokument – nur Ausbildung IES NG",
+             w, "Sans", 4.6, min_size=3.5, color=ci.grey)
+
+
+def draw_card_back(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argparse.Namespace) -> None:
+    """Rückseite: Ausweis (Vorder- und Rückseite, Originalgrösse) und Angaben zur Person."""
     W, H = A6
     x = ox + (W - ID_W * mm) / 2
-    y_top = oy + H - 4 * mm
-    y = draw_header(c, x, y_top, ID_W * mm, ci, args.logo)
-
+    y = draw_header(c, x, oy + H - 4 * mm, ID_W * mm, ci, args.logo)
     front_y = y - 2 * mm - ID_H * mm
     draw_id_front(c, x, front_y, p, ci)
     if not getattr(args, "_enlarged", False):  # Kontrollmass nur bei Originalgrösse sinnvoll
@@ -931,43 +987,15 @@ def draw_card(c: Canvas, ox: float, oy: float, p: CardPerson, ci: CI, args: argp
     back_y = front_y - 2 * mm - ID_H * mm
     draw_id_back(c, x, back_y, p, ci)
 
-    # Fuss: Text links, QR unten rechts (Modulkante bündig mit ID-Rand)
-    qs = args.qr_size * mm
-    quiet = qs * 4 / 33
-    qx = x + ID_W * mm + quiet - qs
-    qy = oy + 2 * mm
-    draw_qr(c, qx, qy, qs, p.qr_payload, args.qr_error)
-
-    # Prä-Triage-Feld links neben dem QR, gleiche Höhe wie die QR-Module
-    bw, bh = 19 * mm, qs - 2 * quiet
-    bx, by = qx + quiet - 2.5 * mm - bw, qy + quiet
-    draw_triage(c, bx, by, bw, bh, p.triage)
-
-    tx, ty = x, back_y - 4.6 * mm
-    max_w = bx - tx - 2 * mm
-    text(c, tx, ty, f"Übungskarte {p.card_id}", "Sans-Bold", 8, ci.text)
-    fit_text(c, tx, ty - 3.4 * mm, f"{p.first_name} {p.last_name}, geb. {p.dob:%d.%m.%Y}",
-             max_w, "Sans", 6.5, color=ci.text)
-    fit_text(c, tx, ty - 6.2 * mm, f"{p.street} {p.house_number}, {p.postcode} {p.city}".replace(" ,", ","),
-             max_w, "Sans", 6.5, color=ci.text)
-    if p.injury:
-        fit_text(c, tx, ty - 9.4 * mm, f"Verletzungsmuster: {p.injury}", max_w, "Sans-Bold", 6.2,
-                 color=TRIAGE["rot"][1])
-    fit_text(c, tx, ty - 12.2 * mm, "Fiktive Personendaten – kein amtliches Dokument – nur Ausbildung IES NG",
-             max_w, "Sans", 4.6, min_size=3.5, color=ci.grey)
-
-
-def draw_triage(c: Canvas, x: float, y: float, w: float, h: float, cat: str) -> None:
-    label, bg, fg = TRIAGE[cat]
-    c.setFillColor(bg)
-    c.setStrokeColor(HexColor("#1F1F1F"))
-    c.setLineWidth(0.4)
-    c.roundRect(x, y, w, h, 1.2 * mm, stroke=1, fill=1)
-    text(c, x + w / 2, y + h - 3.2 * mm, "PRÄ-TRIAGE", "Sans-Bold", 4.8, fg, "c")
-    size = 13.0
-    while size > 6 and pdfmetrics.stringWidth(label, "Sans-Bold", size) > w - 2 * mm:
-        size -= 0.5
-    text(c, x + w / 2, y + 2.6 * mm, label, "Sans-Bold", size, fg, "c")
+    w = ID_W * mm
+    ty = back_y - 4.6 * mm
+    text(c, x, ty, f"Angaben zur Person · {p.card_id}", "Sans-Bold", 7.5, ci.text)
+    fit_text(c, x, ty - 3.4 * mm, f"{p.last_name} {p.first_name}, geb. {p.dob:%d.%m.%Y}", w, "Sans", 6.5,
+             color=ci.text)
+    fit_text(c, x, ty - 6.2 * mm, f"{p.street} {p.house_number}, {p.postcode} {p.city}".replace(" ,", ","),
+             w, "Sans", 6.5, color=ci.text)
+    fit_text(c, x, oy + 3.2 * mm, "Fiktive Personendaten – kein amtliches Dokument – nur Ausbildung IES NG",
+             w, "Sans", 4.6, min_size=3.5, color=ci.grey)
 
 
 def control_scale(c: Canvas, x: float, y: float, ci: CI, length_mm: int = 50) -> None:
@@ -994,50 +1022,54 @@ def cut_marks(c: Canvas, ox: float, oy: float, w: float, h: float) -> None:
 
 
 def render_pdf(cards: list[CardPerson], out: Path, args: argparse.Namespace, ci: CI) -> None:
+    """Beidseitig: je Karte Vorderseite (Patientenkarte) und Rückseite (Ausweis), Wenden an der langen Kante."""
     W, H = A6
     if args.layout == "a6":
         c = Canvas(str(out), pagesize=A6)
         for p in cards:
-            draw_card(c, 0, 0, p, ci, args)
-            c.showPage()
+            for side in ("front", "back"):
+                draw_card(c, 0, 0, p, ci, args, side)
+                c.showPage()
     elif args.layout == "a4-1":  # 1 Karte je A4, Originalgrösse, zentriert mit Schnittlinien
         c = Canvas(str(out), pagesize=A4)
         ox, oy = (A4[0] - W) / 2, (A4[1] - H) / 2
         for p in cards:
-            draw_card(c, ox, oy, p, ci, args)
-            if args.cut_marks:
-                cut_marks(c, ox, oy, W, H)
-            c.showPage()
+            for side in ("front", "back"):
+                draw_card(c, ox, oy, p, ci, args, side)
+                if args.cut_marks:
+                    cut_marks(c, ox, oy, W, H)
+                c.showPage()
     elif args.layout == "a4-gross":  # 1 Karte je A4, vergrössert (A6 -> A4 = Faktor 2)
         c = Canvas(str(out), pagesize=A4)
         scale = min(A4[0] / W, A4[1] / H)
         ox, oy = (A4[0] - W * scale) / 2, (A4[1] - H * scale) / 2
         args._enlarged = True
         for p in cards:
-            c.saveState()
-            c.translate(ox, oy)
-            c.scale(scale, scale)
-            draw_card(c, 0, 0, p, ci, args)
-            c.restoreState()
-            text(c, A4[0] / 2, 4 * mm, f"Vergrössert ({scale:.0%}) – nicht Originalgrösse", "Sans", 7, ci.grey, "c")
-            c.showPage()
+            for side in ("front", "back"):
+                c.saveState()
+                c.translate(ox, oy)
+                c.scale(scale, scale)
+                draw_card(c, 0, 0, p, ci, args, side)
+                c.restoreState()
+                text(c, A4[0] / 2, 4 * mm, f"Vergrössert ({scale:.0%}) – nicht Originalgrösse", "Sans", 7,
+                     ci.grey, "c")
+                c.showPage()
         args._enlarged = False
-    else:  # 4 x A6 auf A4 hoch
+    else:  # 4 x A6 auf A4: Seite mit 4 Vorderseiten, dann Seite mit 4 Rückseiten (Spalten gespiegelt)
         c = Canvas(str(out), pagesize=A4)
         cell_h = A4[1] / 2
-        slots = [(0, cell_h), (W, cell_h), (0, 0), (W, 0)]
-        for i, p in enumerate(cards):
-            ox, oy = slots[i % 4]
-            oy += (cell_h - H) / 2
-            draw_card(c, ox, oy, p, ci, args)
-            if args.cut_marks:
-                cut_marks(c, ox, oy - (cell_h - H) / 2, W, cell_h)
-            if i % 4 == 3:
+        front_slots = [(0, cell_h), (W, cell_h), (0, 0), (W, 0)]
+        back_slots = [(W, cell_h), (0, cell_h), (W, 0), (0, 0)]
+        for i in range(0, len(cards), 4):
+            for side, slots in (("front", front_slots), ("back", back_slots)):
+                for p, (ox, oy) in zip(cards[i:i + 4], slots):
+                    draw_card(c, ox, oy + (cell_h - H) / 2, p, ci, args, side)
+                    if args.cut_marks:
+                        cut_marks(c, ox, oy, W, cell_h)
                 c.showPage()
-        if len(cards) % 4:
-            c.showPage()
-    c.setTitle("Ausbildung IES NG – Übungskarten")
+    c.setTitle("Ausbildung IES NG – Patientenkarten (Übung)")
     c.setViewerPreference("PrintScaling", "None")  # Druckdialog: tatsächliche Grösse
+    c.setViewerPreference("Duplex", "DuplexFlipLongEdge")
     c.setAuthor("BABS – Ausbildung IES NG")
     c.save()
 
@@ -1071,7 +1103,12 @@ def export_png(cards: list[CardPerson], out_dir: Path, args: argparse.Namespace,
             c.setFillColor(white)
             c.rect(0, 0, *sizes[part], stroke=0, fill=1)
             if part == "card":
-                draw_card(c, 0, 0, p, ci, args)
+                draw_card(c, 0, 0, p, ci, args, "front")
+                c.showPage()
+                order.append((p.card_id, "card"))
+                c.setPageSize(sizes[part])
+                draw_card(c, 0, 0, p, ci, args, "back")
+                part = "card_back"
             elif part == "front":
                 draw_id_front(c, pad, pad, p, ci)
             elif part == "back":
@@ -1087,7 +1124,7 @@ def export_png(cards: list[CardPerson], out_dir: Path, args: argparse.Namespace,
     if order:
         doc = pymupdf.open(stream=buf.getvalue(), filetype="pdf")
         for page, (cid, part) in zip(doc, order):
-            dpi = args.png_dpi if part == "card" else args.png_dpi * args.png_crop_zoom
+            dpi = args.png_dpi if part.startswith("card") else args.png_dpi * args.png_crop_zoom
             page.get_pixmap(dpi=int(dpi), alpha=False).save(out_dir / f"{cid}_{part}.png")
             n += 1
     if "qr" in args.png_parts:
@@ -1099,17 +1136,23 @@ def export_png(cards: list[CardPerson], out_dir: Path, args: argparse.Namespace,
 
 
 def write_key(cards: list[CardPerson], path: Path) -> None:
-    cols = ["card_id", "qr_payload", "last_name", "first_name", "gender", "dob", "street", "house_number",
-            "postcode", "city", "canton", "origin", "height_cm", "doc_number", "issue_date", "expiry",
-            "expired", "triage", "injury_pattern", "mrz_line1", "mrz_line2", "mrz_line3", "mrz_valid", "mrz_error"]
+    cols = ["card_id", "qr_payload", "pre_triage", "triage", "swiss_pre_kriterium", "fall", "verletzung",
+            "beschreibung", "gehfaehig", "atmung", "af", "stridor", "atemwege_offenhalten", "radialispuls",
+            "rekap_s", "blutung", "befolgt_aufforderungen", "starke_schmerzen", "last_name", "first_name", "gender",
+            "dob", "street", "house_number", "postcode", "city", "canton", "origin", "height_cm", "doc_number",
+            "issue_date", "expiry", "expired", "mrz_line1", "mrz_line2", "mrz_line3", "mrz_valid", "mrz_error"]
+    lab = lambda k: KATEGORIEN[k][0]  # noqa: E731
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow(cols)
         for p in cards:
-            w.writerow([p.card_id, p.qr_payload, p.last_name, p.first_name, p.gender, p.dob.isoformat(),
+            fa, b = p.fall, p.fall.befund
+            w.writerow([p.card_id, p.qr_payload, lab(fa.pre), lab(fa.triage), fa.kriterium, fa.key, fa.titel,
+                        fa.text, b.gehfaehig, b.atmung, b.af, b.stridor, b.offenhalten, b.radialispuls, b.rekap_s,
+                        b.blutung, b.kommando, b.schmerzen_stark,
+                        p.last_name, p.first_name, p.gender, p.dob.isoformat(),
                         p.street, p.house_number, p.postcode, p.city, p.canton, p.origin, p.height_cm,
                         p.doc_number, p.issue_date.isoformat(), p.expiry.isoformat(), p.expired,
-                        TRIAGE[p.triage][0], p.injury,
                         *p.td1.lines, all(p.checks.values()), p.mrz_error])
 
 # -------------------------
@@ -1120,10 +1163,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="IES NG Übungskarten (A6) erzeugen", fromfile_prefix_chars="@")
     g = ap.add_argument_group("Karten")
     g.add_argument("-n", "--count", type=int, default=20, help="Anzahl Karten")
-    g.add_argument("--start", type=int, default=1, help="erste laufende Nummer")
-    g.add_argument("--prefix", default="CHY")
-    g.add_argument("--digits", type=int, default=4)
-    g.add_argument("--max-number", type=int, default=2000, help="höchste erlaubte Nummer (CHY2000)")
+    g.add_argument("--start", type=int, default=1, help="erste laufende Nummer (1 = --id-start)")
+    g.add_argument("--id-start", default="CHYY001", help="erste PLS-ID: CH + 2 Buchstaben + 3 Ziffern")
     g.add_argument("--layout", choices=["a6", "a4", "a4-1", "a4-gross"], default="a6",
                    help="a6 = 1 Karte/Seite A6; a4 = 4 Karten/A4; a4-1 = 1 Karte/A4 in Originalgrösse; "
                         "a4-gross = 1 Karte/A4 vergrössert")
@@ -1146,7 +1187,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--qr-format", default="{id}",
                    help="Payload, {id} = Kartennummer; CHA-Format: \"(dc|{id}|{id})\"")
     g.add_argument("--qr-error", choices=["l", "m", "q"], default="m", help="ECC-Stufe (Version 2)")
-    g.add_argument("--qr-size", type=float, default=17.0, help="Kantenlänge inkl. Ruhezone, mm")
+    g.add_argument("--qr-size", type=float, default=30.0, help="Kantenlänge inkl. Ruhezone, mm")
 
     g = ap.add_argument_group("Übungsfälle")
     g.add_argument("--p-invalid-mrz", type=float, default=0.0, help="Anteil MRZ mit falscher Prüfziffer")
@@ -1154,11 +1195,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     g.add_argument("--adults-only", action="store_true")
     g.add_argument("--no-photos", action="store_true", help="Platzhalter statt Comic-Passfoto")
 
-    g = ap.add_argument_group("Prä-Triage")
-    g.add_argument("--p-red", type=float, default=0.15, help="Anteil Rot")
-    g.add_argument("--p-yellow", type=float, default=0.30, help="Anteil Gelb (Rest = Grün)")
-    g.add_argument("--p-red-pattern", type=float, default=0.40,
-                   help="Anteil Roter mit genau einem Verletzungsmuster")
+    g = ap.add_argument_group("Prä-Triage (Swiss Pre) / Triage")
+    g.add_argument("--pre-mix", default=None,
+                   help="Anteile Prä-Triage, Default rot=15,gelb=30,gruen=45,weiss=7,schwarz=3; "
+                        "Triage (inkl. Blau) folgt fallbezogen")
 
     g = ap.add_argument_group("Adressen (nur echte; Default: Register in data/)")
     g.add_argument("--addresses", help="Gebäudeadressverzeichnis (.csv/.csv.zip) oder eigener Auszug")
@@ -1184,8 +1224,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[list[str]] = None) -> None:
     args = parse_args(argv)
     last = args.start + args.count - 1
-    if args.count <= 0 or args.start < 1 or last > args.max_number:
-        raise SystemExit(f"Nummernbereich {args.start}..{last} ausserhalb 1..{args.max_number}")
+    try:
+        cap = pls_capacity(args.id_start)
+    except Exception:
+        raise SystemExit(f"--id-start {args.id_start}: PLS-Format CH + 2 Buchstaben + 3 Ziffern (z. B. CHYY001)")
+    if args.count <= 0 or args.start < 1 or last > cap:
+        raise SystemExit(f"Nummernbereich {args.start}..{last} ab {args.id_start} überschreitet CHZZ999 ({cap})")
     fonts = register_fonts({"Sans": args.font_regular, "Sans-Bold": args.font_bold, "MRZ": args.font_mrz, "Mono": args.font_mono})
     if "ocr" not in Path(fonts["MRZ"]).name.lower():
         print(f"Hinweis: MRZ mit Ersatzschrift {Path(fonts['MRZ']).name}; für maschinelles Lesen OCR-B verwenden "

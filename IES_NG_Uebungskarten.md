@@ -1,12 +1,24 @@
-# IES NG – Übungskarten (DIN A6)
+# IES NG – Übungskarten (DIN A6, beidseitig)
 
-Ausbildungsmaterial mit fiktiven Personen: Schweizer ID (Vorder-/Rückseite, MRZ TD1) und fortlaufender QR-Code.
+Ausbildungsmaterial mit fiktiven Patienten nach PLS Schweiz: Patientenkarte (Vorderseite) und
+Schweizer ID mit MRZ TD1 (Rückseite).
 
 ## Aufbau einer Karte (105 × 148 mm)
+**Vorderseite – Patientenkarte**
 1. CI-Kopf: Bundeslogo (vereinfacht oder `--logo`), «Bundesamt für Bevölkerungsschutz BABS», «Ausbildung IES NG»
-2. ID Vorderseite, Massstab 1:1 (85.6 × 54 mm, ID-1), Layout Identitätskarte 2023
-3. ID Rückseite mit MRZ: 3 × 30 Zeichen, Teilung 2.54 mm, Zeilenabstand 4.23 mm, ruhiger heller Grund
-4. Fuss: Kartennummer, Name, Wohnadresse, ggf. Verletzungsmuster, Hinweis «fiktiv»; Prä-Triage-Feld und QR unten rechts
+2. PLS-ID (`CHYY001`) gross und als QR-Code (30 mm) oben rechts
+3. Farbfelder **Prä-Triage** (Swiss Pre, ohne Blau) und **Triage** (ärztlich, inkl. Blau)
+4. **Auffindesituation**: gezeichnete Figur im Aussehen des Passfotos, Haltung/Mimik/Verletzungsmarken passend zum Fall
+5. Verletzung (Titel), kurze Beschreibung, **Befunde** (Grundlage für Swiss Pre)
+
+**Rückseite – Ausweis**
+1. CI-Kopf
+2. ID Vorderseite, Massstab 1:1 (85.6 × 54 mm, ID-1), Layout Identitätskarte 2023, Kontrollmass 50 mm
+3. ID Rückseite mit MRZ: 3 × 30 Zeichen, Teilung 2.54 mm, Zeilenabstand 4.23 mm
+4. Angaben zur Person: PLS-ID, Name, Geburtsdatum, Wohnadresse
+
+Druck: beidseitig, **an der langen Kante wenden** (PDF-Vorgabe gesetzt); bei `--layout a4` sind die Rückseiten
+spaltenweise gespiegelt, damit Vorder- und Rückseite übereinander liegen.
 
 Passfoto: comicartiges Vektor-Porträt passend zu Alter und Geschlecht (`ies_ng_avatar.py`), pro Karte reproduzierbar (Seed + Kartennummer),
 wie beim Original in Graustufen.
@@ -26,12 +38,12 @@ Alle IDs tragen «SPECIMEN», Dokumentnummern beginnen mit `X` (fiktiv).
 
 ## PNG-Export (Android-Emulator)
 ```bash
-python ies_ng_karten.py -n 50 --png                          # png/CHY0001_card.png, _qr.png, _mrz.png
+python ies_ng_karten.py -n 50 --png                          # png/CHYY001_card.png, _card_back.png, _qr.png, _mrz.png
 python ies_ng_karten.py -n 50 --png emulator --png-parts qr mrz back
 ```
 | Teil | Inhalt | Zweck |
 |---|---|---|
-| `card` | ganze A6-Karte (300 dpi) | Gesamtansicht |
+| `card` | Vorderseite (`_card.png`) und Rückseite (`_card_back.png`), 300 dpi | Gesamtansicht, QR-Scan |
 | `front`, `back` | ID-Seite freigestellt, weisser Rand | Ausweis scannen |
 | `mrz` | nur MRZ, weisser Rand | MRZ-Erkennung |
 | `qr` | nur QR (`segno`, Ruhezone 6 Module) | QR-Scan |
@@ -96,11 +108,13 @@ Jahresbereiche (`1990-1999`) → Mitte; Total-/Schweiz-Zeilen und unterdrückte 
 ## Nutzung
 ```bash
 pip install -r requirements.txt
-python ies_ng_karten.py -n 40                       # CHY0001–CHY0040, 1 Karte/Seite A6
+python ies_ng_karten.py -n 40                       # CHYY001–CHYY040, A6 beidseitig
 python ies_ng_karten.py -n 200 --layout a4          # 4 Karten/A4 mit Schnittlinien
 python ies_ng_karten.py -n 10 --layout a4-1         # 1 Karte/A4 in Originalgrösse
 python ies_ng_karten.py -n 10 --layout a4-gross     # 1 Karte/A4 vergrössert (Beamer, Aushang)
-python ies_ng_karten.py -n 50 --start 151           # CHY0151–CHY0200
+python ies_ng_karten.py -n 50 --start 151           # CHYY151–CHYY200
+python ies_ng_karten.py -n 20 --id-start CHAB001     # anderer Nummernkreis
+python ies_ng_karten.py -n 100 --pre-mix rot=20,gelb=30,gruen=40,weiss=5,schwarz=5
 python ies_ng_karten.py -n 100 --p-invalid-mrz 0.1 --p-expired 0.05   # Negativfälle
 python ies_ng_karten.py @karten.args                # Argumente aus Datei (1 pro Zeile)
 ```
@@ -110,9 +124,10 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | Option | Default | Zweck |
 |---|---|---|
 | `-n/--count` | 20 | Anzahl Karten |
-| `--start` | 1 | erste Nummer |
-| `--prefix`, `--digits`, `--max-number` | CHY, 4, 2000 | Nummernkreis CHY0001–CHY2000 (Überschreitung = Abbruch) |
-| `--qr-format` | `{id}` | Payload nur Kartennummer (z. B. `CHY0003`); CHA-Format `(dc\|{id}\|{id})` wird von der IES-NG-App als `DCCHY0003CHY0003` gelesen |
+| `--start` | 1 | erste laufende Nummer (1 = `--id-start`) |
+| `--id-start` | CHYY001 | PLS-ID: CH + 2 Buchstaben + 3 Ziffern; nach 999 folgt das nächste Paar (CHYY999 → CHYZ001), Ende CHZZ999 |
+| `--qr-format` | `{id}` | Payload nur Kartennummer (z. B. `CHYY003`); CHA-Format `(dc\|{id}\|{id})` wird von der IES-NG-App als `DCCHYY003CHYY003` gelesen |
+| `--qr-size` | 30 | QR-Kantenlänge inkl. Ruhezone, mm |
 | `--qr-error` | m | ECC (L/M/Q; H passt nicht in Version 2) |
 | `--layout` | a6 | `a6` (1 Karte/A6), `a4` (4 Karten/A4), `a4-1` (1 Karte/A4, Originalgrösse, Schnittlinie), `a4-gross` (1 Karte/A4, vergrössert ×2, ohne Kontrollmass) |
 | `--p-invalid-mrz` | 0 | Anteil falscher Prüfziffern (Feld in Lösungsliste) |
@@ -120,19 +135,38 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 | `--adults-only` | aus | nur Erwachsene |
 | `--no-photos` | aus | Platzhalter statt Comic-Passfoto |
 | `--png [ORDNER]`, `--png-parts` | aus; card qr mrz | PNG-Export, z. B. für Android-Emulator |
-| `--p-red`, `--p-yellow` | 0.15, 0.30 | Prä-Triage Rot/Gelb, Rest Grün (0.55) |
-| `--p-red-pattern` | 0.40 | Anteil Roter mit genau einem Verletzungsmuster |
+| `--pre-mix` | rot=15,gelb=30,gruen=45,weiss=7,schwarz=3 | Anteile Prä-Triage (exakt); Triage folgt je Fall |
 | `--addresses` | neuestes Register in `data/` | amtliches Gebäudeadressverzeichnis oder eigener Auszug |
 | `--canton`, `--plz`, `--gemeinde`, `--wohngebaeude` | – | Adressfilter |
 | `--first-names/--last-names` | Demo-Listen | Namensregister (siehe `synthetic_people.py`) |
 | `--logo`, `--font-*` | gezeichnet / Liberation / DejaVu Mono | CI-Assets |
 
-## Prä-Triage
-- Verteilung exakt nach Anteilen (Methode der grössten Reste), Karten zufällig zugeordnet
-- 40 % der Roten erhalten **genau ein** zufälliges Verletzungsmuster:
-  behebbare Atemwegsverlegung, arterielle Blutung, Verbrennung Grad 2–3 > 60 % KOF, Schnappatmung
-- Bei wenigen Roten wird der Rest zufällig gerundet (Erwartungswert 40 %)
-- Lösungsliste: Spalten `triage`, `injury_pattern`
+## Prä-Triage (Swiss Pre) und Triage
+Grundlage: Gebrauchsanweisung PLS Schweiz (KSD, 2019), Algorithmus Swiss Pre (`ies_ng_swisspre.py`).
+
+| Schritt | Kriterium | ja → |
+|---|---|---|
+| A/(E) | keine Atmung nach Freimachen · nicht vereinbare Verletzung · sichere Todeszeichen | Schwarz |
+| A | Inhalationstrauma mit Stridor · Atemwege offenhalten | Rot |
+| B | AF < 10 oder > 30 | Rot |
+| C | kein Radialispuls · Rekap > 2 s · unstillbare Blutung | Rot |
+| C | sicher gestillte Blutung | Gelb |
+| D | befolgt Aufforderungen nicht | Rot |
+| E | nicht gehfähig · starke Schmerzen | Gelb |
+| E | verletzt / erkrankt → Grün; unverletzt → Weiss | |
+
+- **Prä-Triage**: Schwarz, Rot, Gelb, Grün, Weiss (nie Blau); Verteilung exakt nach `--pre-mix`
+- **Fallkatalog** (24 Fälle): je Fall Verletzung, Beschreibung, Befunde, Auffindesituation (Umgebung, Haltung,
+  Mimik, Marken). Befunde werden zufällig im plausiblen Bereich erzeugt und **mit Swiss Pre geprüft** –
+  ein Fall, der nicht die Prä-Triage-Farbe ergibt, bricht die Erzeugung ab
+- Enthalten u. a.: behebbare Atemwegsverlegung, Inhalationstrauma mit Stridor, Schnappatmung,
+  Verbrennung Grad 2–3 > 60 % KOF (Rot über B: AF > 30), unstillbare arterielle Blutung (Rot) bzw. mit
+  Tourniquet gestillt (Gelb), Schock, SHT, Frakturen, Rauchgas, leichte Verletzungen, Unverletzte
+- **Triage** (ärztlich, inkl. Blau): fallbezogene Verteilung, z. B. Verbrennung > 60 % KOF → Blau 60 % / Rot 40 %;
+  Rot → teils Gelb (Übertriage), Grün → teils Gelb
+- Schwarz und Blau nur bei Personen ab 16 Jahren (Übungsrahmen)
+- Lösungsliste: `pre_triage`, `triage`, `swiss_pre_kriterium`, `fall`, `verletzung`, `beschreibung` und alle Befunde
+- Vorschau aller Szenen: `python ies_ng_szene.py -o szenen_vorschau.pdf`
 
 ## Comic-Passfotos
 - Alter: Babys (kaum Haare), Kinder (runder Kopf, grosse Augen, Wangen), ab 40 Stirnfalten, ab 45 Nasolabialfalten,
@@ -163,7 +197,8 @@ Ausgabe: `ies_ng_karten.pdf` + `ies_ng_karten_loesungen.csv` (Lösungsliste, `;`
 ## Verifikation (2000 Karten, A4)
 - QR: 2000/2000 dekodiert (zxing-cpp, 300 dpi), Reihenfolge korrekt
 - MRZ: Prüfziffern = Lösungsliste = Lib `mrz`; Ausstellung ≥ Geburt, Ablauf > Ausstellung
-- Prä-Triage (2000 Karten): 300 Rot / 600 Gelb / 1100 Grün, 120 Rote mit Muster
+- Prä-Triage (200 Karten): 30 Rot / 60 Gelb / 90 Grün / 14 Weiss / 6 Schwarz (exakt); Swiss Pre aus den Befunden
+  der Lösungsliste nachgerechnet: 0 Abweichungen; QR 200/200 auf den Vorderseiten (A4, beidseitig)
 - MRZ-Schrift: OCR-B (OFL, `fonts/OCR-B.ttf`); OCR mit Lesegerät nicht getestet
 
 ## Offen
